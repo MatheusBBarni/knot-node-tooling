@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import http from "node:http";
 import path from "node:path";
 import test from "node:test";
@@ -81,6 +82,10 @@ test("install does not reprint added packages when the store already has them", 
   }));
   const registryUrl = `http://127.0.0.1:${port}`;
 
+  const home = await mkdtemp(path.join(tmpdir(), "knot-home-"));
+  t.after(() => removeWorkspace(home));
+  const env = { ...process.env, HOME: home };
+
   const workspace = await makeWorkspace({
     "package.json": JSON.stringify({
       name: "app",
@@ -95,6 +100,7 @@ test("install does not reprint added packages when the store already has them", 
   const first = await runProcess(knot, ["install", "--registry", registryUrl], {
     cwd: workspace,
     timeoutMs: 60_000,
+    env,
   });
   assert.equal(first.status, 0, first.stderr);
   assert.match(first.stderr, /\+ knot-fixture-hello@1\.0\.0/);
@@ -104,6 +110,7 @@ test("install does not reprint added packages when the store already has them", 
   const second = await runProcess(knot, ["install", "--registry", registryUrl], {
     cwd: workspace,
     timeoutMs: 60_000,
+    env,
   });
   assert.equal(second.status, 0, second.stderr);
   assert.doesNotMatch(second.stderr, /\+ knot-fixture-hello@1\.0\.0/);
@@ -123,6 +130,7 @@ test("install does not reprint added packages when the store already has them", 
   const third = await runProcess(knot, ["install", "--registry", registryUrl], {
     cwd: workspace,
     timeoutMs: 60_000,
+    env,
   });
   assert.equal(third.status, 0, third.stderr);
   assert.match(third.stderr, /\+ knot-fixture-hello@1\.0\.0/);

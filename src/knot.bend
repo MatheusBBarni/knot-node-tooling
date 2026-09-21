@@ -23,6 +23,15 @@ def Fs.clone_dir(src: String, dst: String) ->
   import "./host/fs_clone_dir.c"
   import "./host/fs_clone_dir.js"
 
+def Fs.layout_pkg(dest: String, name: String) ->
+  IO(Result<&1, &1, U32 & String, Unit>):
+  import "./host/fs_layout_pkg.c"
+  import "./host/fs_layout_pkg.js"
+
+def Fs.offline_lock() -> IO(Result<&1, &1, U32 & String, String>):
+  import "./host/fs_offline_lock.c"
+  import "./host/fs_offline_lock.js"
+
 def Fs.unlink(path: String) -> IO(Result<&1, &1, U32 & String, Unit>):
   import "./host/fs_unlink.c"
   import "./host/fs_unlink.js"
@@ -97,7 +106,14 @@ def read_text(+path: String) -> IO(String):
   do IO<String>:
     r : Result<&1, &1, U32 & String, File> <- File.open(path, "r")
     file : File <- read_open(path, r)
-    pair : File & Result<&1, &1, U32 & String, String> <- File.read(file, 33554432)
+    pair : File & Result<&1, &1, U32 & String, String> <- File.read(file, 4194304)
+    read_text_fin(pair)
+
+def read_pkg(+path: String) -> IO(String):
+  do IO<String>:
+    r : Result<&1, &1, U32 & String, File> <- File.open(path, "r")
+    file : File <- read_open(path, r)
+    pair : File & Result<&1, &1, U32 & String, String> <- File.read(file, 262144)
     read_text_fin(pair)
 
 def write_text_fin(pair: File & Result<&1, &1, U32 & String, Unit>) -> IO(Unit):
@@ -1207,12 +1223,7 @@ def offline_materialize(has: Bool, +cas: String, +dest: String, +got: String, +i
       install_verified(cas, dest, got, integrity)
 
 def offline_finish(+name: String, +dest: String) -> IO(Unit):
-  do IO<Unit>:
-    +nested_txt : String <- read_text(dest ++ "/package.json")
-    +req : String <- join_nested_deps(nested_txt)
-    link_children(dest, String.lines(req))
-    link_bins_if(name, nested_txt, True{})
-    link_root_if(name, True{})
+  IO.try(Unit, Fs.layout_pkg(dest, name))
 
 def offline_from_cas(+name: String, +cas: String, +dest: String, +integrity: String) -> IO(Unit):
   do IO<Unit>:
@@ -1240,16 +1251,31 @@ def offline_need_cas(cas_ex: Bool, +name: String, +cas: String, +dest: String, +
     case False{}:
       offline_from_url(name, cas, dest, integrity, tarball)
 
+def offline_clone(+name: String, +dest: String, +unp: String) -> IO(Unit):
+  do IO<Unit>:
+    u : Unit <- IO.try(Unit, Fs.clone_dir(unp, dest))
+    offline_finish(name, dest)
+
+def offline_unp(has_unp: Bool, +name: String, +dest: String, +integrity: String, +tarball: String, +unp: String) -> IO(Unit):
+  match has_unp:
+    case True{}:
+      offline_clone(name, dest, unp)
+    case False{}:
+      do IO<Unit>:
+        +cas : String <- cas_file(integrity)
+        ex : Bool <- file_exists(cas)
+        offline_need_cas(ex, name, cas, dest, integrity, tarball)
+
 def offline_one_have(has: Bool, +name: String, +dest: String, +integrity: String, +tarball: String, +ver: String) -> IO(Unit):
   match has:
     case True{}:
       IO.pure(Unit, Unit{})
     case False{}:
       do IO<Unit>:
-        u_log : Unit <- progress("+ " ++ name ++ "@" ++ ver)
-        +cas : String <- cas_file(integrity)
-        ex : Bool <- file_exists(cas)
-        offline_need_cas(ex, name, cas, dest, integrity, tarball)
+        u_log : Unit <- IO.print_err("+ " ++ name ++ "@" ++ ver)
+        +unp : String <- unpacked_path(integrity)
+        has_unp : Bool <- file_exists(unp ++ "/package.json")
+        offline_unp(has_unp, name, dest, integrity, tarball, unp)
 
 def offline_one(+name: String, +integrity: String, +tarball: String, +ver: String) -> IO(Unit):
   do IO<Unit>:
@@ -1989,12 +2015,22 @@ def count_name_lines(fuel: Nat, lines: List<&2, String>, acc: Nat) -> Nat:
         case Con{+line, rest}:
           count_name_lines(p, rest, count_name_inc(String.starts_with(line, "name "), acc))
 
+def run_locked_count(r: Result<&1, &1, U32 & String, String>) -> IO(String):
+  match r:
+    case Done{n}:
+      IO.pure(String, n)
+    case Fail{_}:
+      do IO<String>:
+        lock : String <- read_text("knot.lock")
+        u : Unit <- run_offline()
+        return Nat.show(count_name_lines(4096n, String.lines(lock), 0n))
+
 def run_install_locked() -> IO(Unit):
   do IO<Unit>:
     start : Nat <- IO.now()
-    lock : String <- read_text("knot.lock")
-    run_offline()
-    u_sum : Unit <- progress(Nat.show(count_name_lines(4096n, String.lines(lock), 0n)) ++ " packages installed")
+    r : Result<&1, &1, U32 & String, String> <- Fs.offline_lock()
+    n : String <- run_locked_count(r)
+    u_sum : Unit <- progress(n ++ " packages installed")
     end : Nat <- IO.now()
     progress(format_elapsed(Nat.sub(end, start)))
 
