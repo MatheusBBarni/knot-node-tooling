@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+
+ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+
+export BEND_NO_TELEMETRY=1
+export PATH="${HOME}/.bend/bin:${PATH}"
+export CC="$ROOT/scripts/cc"
+
+mkdir -p "$ROOT/dist"
+bend "$ROOT/src/knot.bend" -o "$ROOT/dist/knot.bin"

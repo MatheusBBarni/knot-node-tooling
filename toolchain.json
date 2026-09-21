@@ -1,0 +1,13 @@
+{
+  "bend": {
+    "version": "2.0.4",
+    "license": "Apache-2.0",
+    "artifact": {
+      "url": "https://bend-lang.com/dl/2.0.4.tar.gz",
+      "sha256": "dff7d7e7b42a4572c79d3084093521d198a93af4684d4a10fe8322c265481734"
+    }
+  },
+  "node": {
+    "major": 24
+  }
+}

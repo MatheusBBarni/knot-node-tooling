@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+
+llvm_clang=/opt/homebrew/opt/llvm@21/bin/clang
+lld=/opt/homebrew/opt/lld@21/bin/ld64.lld
+
+if [ -x "$llvm_clang" ] && [ -x "$lld" ]; then
+  exec "$llvm_clang" -fuse-ld="$lld" "$@"
+fi
+
+if command -v clang >/dev/null 2>&1; then
+  exec clang "$@"
+fi
+
+echo "knot: no usable clang (need clang 14+, or Homebrew llvm@21 and lld@21 on macOS without Xcode)" >&2
+exit 1

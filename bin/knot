@@ -1,0 +1,19 @@
+#!/bin/sh
+set -u
+
+ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+BIN="$ROOT/dist/knot.bin"
+
+if [ ! -x "$BIN" ]; then
+  echo "knot: native binary missing; run scripts/build-knot" >&2
+  exit 127
+fi
+
+export KNOT_ARGC="$#"
+n=1
+for arg in "$@"; do
+  export "KNOT_ARG_$n=$arg"
+  n=$((n + 1))
+done
+
+exec "$BIN"
