@@ -194,8 +194,22 @@ def js_path_if(+file: String, ts: Bool) -> String:
     case False{}:
       file ++ ".js"
 
+def js_path_tsx(+file: String) -> String:
+  String.append(String.take(file, nat_sub(String.length(file), 3n)), "js")
+
+def js_path_go(+file: String, tsx: Bool, jsx: Bool) -> String:
+  match tsx:
+    case True{}:
+      js_path_tsx(file)
+    case False{}:
+      match jsx:
+        case True{}:
+          js_path_tsx(file)
+        case False{}:
+          js_path_if(file, String.ends_with(file, ".ts"))
+
 def js_path(+file: String) -> String:
-  js_path_if(file, String.ends_with(file, ".ts"))
+  js_path_go(file, String.ends_with(file, ".tsx"), String.ends_with(file, ".jsx"))
 
 def basename_go(parts: List<&2, String>) -> String:
   match parts:

@@ -94,7 +94,7 @@ Knot is faster than npm 11 and pnpm 11 on that same machine and method.
 The notes in those files list versions, the mismatched lock graphs, and what was not measured.
 
 ## Compilation and bundling
-`knot transpile` and `knot build --no-bundle` strip type annotations, `interface` and `type` declarations, `import type`, and `as` assertions, and lower numeric `enum` declarations to `const` objects.
+`knot transpile` and `knot build --no-bundle` strip type annotations and lower JSX/TSX (classic `React.createElement` by default; `--jsx-runtime automatic` for `react/jsx-runtime`), `interface` and `type` declarations, `import type`, and `as` assertions, and lower numeric `enum` declarations to `const` objects.
 `--minify-whitespace` inserts spaces only between identifiers and numbers.
 `--minify-identifiers` keeps exported function names and shortens other identifiers.
 `knot build <entry> --outfile out.js` follows relative `./` imports, `require("./file.ts")`, `tsconfig.json` `compilerOptions.paths` aliases including `@app/*` wildcards, and bare specifiers via `package.json` `exports` or `main`, then `index.js`/`index.ts`, drops unused `function` declarations from non-entry modules, writes a content-hashed `.js` chunk for `import("./file.ts")`, and writes `require()` targets next to the bundle as `.js`.

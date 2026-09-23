@@ -90,6 +90,11 @@ def Json.query(text: String, path: String, mode: String) ->
   import "./host/json_query.c"
   import "./host/json_query.js"
 
+def Jsx.lower(source: String, mode: String) ->
+  IO(Result<&1, &1, U32 & String, String>):
+  import "./host/jsx_lower.c"
+  import "./host/jsx_lower.js"
+
 def read_open(path: String, r: Result<&1, &1, U32 & String, File>) -> IO(File):
   match r:
     case Fail{_}:
@@ -2356,6 +2361,49 @@ def dispatch_install(+cmd: String, rest: List<&2, String>, is_install: Bool) -> 
     case False{}:
       dispatch_fetch(cmd, rest, String.eq(cmd, "fetch"))
 
+
+def is_tsx_go(tsx: Bool, jsx: Bool) -> Bool:
+  match tsx:
+    case True{}:
+      True{}
+    case False{}:
+      jsx
+
+def is_tsx(+file: String) -> Bool:
+  is_tsx_go(String.ends_with(file, ".tsx"), String.ends_with(file, ".jsx"))
+
+def jsx_mode_or_go(auto: Bool) -> String:
+  match auto:
+    case True{}:
+      "automatic"
+    case False{}:
+      "classic"
+
+def jsx_mode_or(+mode: String) -> String:
+  jsx_mode_or_go(String.eq(mode, "automatic"))
+
+def jsx_prep_res(r: Result<&1, &1, U32 & String, String>) -> IO(String):
+  match r:
+    case Fail{_}:
+      IO.die(String, 1, "knot: jsx transform failed (syntax_error)")
+    case Done{s}:
+      IO.pure(String, s)
+
+def jsx_prep_do(+src: String, +mode: String) -> IO(String):
+  do IO<String>:
+    r : Result<&1, &1, U32 & String, String> <- Jsx.lower(src, mode)
+    jsx_prep_res(r)
+
+def jsx_prep_go(tsx: Bool, +src: String, +mode: String) -> IO(String):
+  match tsx:
+    case True{}:
+      jsx_prep_do(src, jsx_mode_or(mode))
+    case False{}:
+      IO.pure(String, src)
+
+def jsx_prep(+file: String, +src: String, +mode: String) -> IO(String):
+  jsx_prep_go(is_tsx(file), src, mode)
+
 def transpile_none(first: Bool) -> IO(Unit):
   match first:
     case True{}:
@@ -2420,65 +2468,88 @@ def transpile_one_v1(+file: String, +src: String, v1: Bool) -> IO(Unit):
         transpile_one_src_ex(file, src, ex)
 
 
-def transpile_one(+file: String) -> IO(Unit):
+def transpile_one(+file: String, +mode: String) -> IO(Unit):
   do IO<Unit>:
-    +src : String <- read_text(file)
+    +raw : String <- read_text(file)
+    +src : String <- jsx_prep(file, raw, mode)
     v1 : Bool <- file_exists(".knot/build-cache/v1")
     transpile_one_v1(file, src, v1)
 
 
-def transpile_one_to_min(+file: String, +out: String, minify: Bool, ids: Bool) -> IO(Unit):
+def transpile_one_to_min(+file: String, +out: String, minify: Bool, ids: Bool, +mode: String) -> IO(Unit):
   do IO<Unit>:
-    src : String <- read_text(file)
+    raw : String <- read_text(file)
+    src : String <- jsx_prep(file, raw, mode)
     transpile_write_to(file, out, Compiler.transpile_opt(file, src, minify, ids))
 
-def transpile_one_to(+file: String, +out: String) -> IO(Unit):
-  transpile_one_to_min(file, out, False{}, False{})
+def transpile_one_to(+file: String, +out: String, +mode: String) -> IO(Unit):
+  transpile_one_to_min(file, out, False{}, False{}, mode)
 
 
-def transpile_files(args: List<&2, String>, first: Bool) -> IO(Unit):
+def transpile_files(args: List<&2, String>, first: Bool, +mode: String) -> IO(Unit):
   match args:
     case Nil{}:
       transpile_none(first)
     case Con{+file, rest}:
       do IO<Unit>:
-        u : Unit <- transpile_one(file)
-        transpile_files(rest, False{})
+        u : Unit <- transpile_one(file, mode)
+        transpile_files(rest, False{}, mode)
 
-def run_tp_ok_min(+file: String, +flag: String, +out: String, ok: Bool, minify: Bool, ids: Bool) -> IO(Unit):
+def run_tp_ok_min(+file: String, +flag: String, +out: String, ok: Bool, minify: Bool, ids: Bool, +mode: String) -> IO(Unit):
   match ok:
     case True{}:
-      transpile_one_to_min(file, out, minify, ids)
+      transpile_one_to_min(file, out, minify, ids, mode)
     case False{}:
-      transpile_files(Con{file, Con{flag, Con{out, Nil{}}}}, True{})
+      transpile_files(Con{file, Con{flag, Con{out, Nil{}}}}, True{}, mode)
 
-def run_transpile_args(args: List<&2, String>, minify: Bool, ids: Bool) -> IO(Unit):
+def run_transpile_args(args: List<&2, String>, minify: Bool, ids: Bool, +mode: String) -> IO(Unit):
   match args:
     case Con{+file, Con{+flag, Con{+out, Nil{}}}}:
-      run_tp_ok_min(file, flag, out, String.eq(flag, "--outfile"), minify, ids)
+      run_tp_ok_min(file, flag, out, String.eq(flag, "--outfile"), minify, ids, mode)
     case _:
-      transpile_files(args, True{})
+      transpile_files(args, True{}, mode)
 
-def run_transpile_i(+head: String, rest: List<&2, String>, mi: Bool) -> IO(Unit):
+def run_transpile_i(+head: String, rest: List<&2, String>, mi: Bool, +mode: String) -> IO(Unit):
   match mi:
     case True{}:
-      run_transpile_args(rest, False{}, True{})
+      run_transpile_args(rest, False{}, True{}, mode)
     case False{}:
-      run_transpile_args(Con{head, rest}, False{}, False{})
+      run_transpile_args(Con{head, rest}, False{}, False{}, mode)
 
-def run_transpile_h(+head: String, rest: List<&2, String>, mw: Bool) -> IO(Unit):
+def run_transpile_h(+head: String, rest: List<&2, String>, mw: Bool, +mode: String) -> IO(Unit):
   match mw:
     case True{}:
-      run_transpile_args(rest, True{}, False{})
+      run_transpile_args(rest, True{}, False{}, mode)
     case False{}:
-      run_transpile_i(head, rest, String.eq(head, "--minify-identifiers"))
+      run_transpile_i(head, rest, String.eq(head, "--minify-identifiers"), mode)
+
+def run_transpile_go(args: List<&2, String>, +mode: String) -> IO(Unit):
+  match args:
+    case Nil{}:
+      transpile_files(args, True{}, mode)
+    case Con{+head, rest}:
+      run_transpile_h(head, rest, String.eq(head, "--minify-whitespace"), mode)
+
+def run_transpile_jsx_mode(rest: List<&2, String>) -> IO(Unit):
+  match rest:
+    case Con{+mode, tail}:
+      run_transpile_go(tail, mode)
+    case Nil{}:
+      IO.die(Unit, 2, "knot: --jsx-runtime requires classic|automatic (missing_input)")
+
+def run_transpile_jsx(+head: String, rest: List<&2, String>, is_jsx: Bool) -> IO(Unit):
+  match is_jsx:
+    case True{}:
+      run_transpile_jsx_mode(rest)
+    case False{}:
+      run_transpile_h(head, rest, String.eq(head, "--minify-whitespace"), "classic")
 
 def run_transpile(args: List<&2, String>) -> IO(Unit):
   match args:
     case Nil{}:
-      transpile_files(args, True{})
+      transpile_files(args, True{}, "classic")
     case Con{+head, rest}:
-      run_transpile_h(head, rest, String.eq(head, "--minify-whitespace"))
+      run_transpile_jsx(head, rest, String.eq(head, "--jsx-runtime"))
 
 
 
@@ -3032,14 +3103,14 @@ def run_build_nb(no_bundle: Bool, +head: String, rest: List<&2, String>) -> IO(U
           watch_loop(0n, file, last, src, False{})
         case False{}:
           do IO<Unit>:
-            u : Unit <- transpile_one(file)
+            u : Unit <- transpile_one(file, "classic")
             watch_loop(0n, file, src, src, False{})
 
 def watch_transpile(args: List<&2, String>) -> IO(Unit):
   match args:
     case Con{+file, _}:
       do IO<Unit>:
-        u : Unit <- transpile_one(file)
+        u : Unit <- transpile_one(file, "classic")
         +src : String <- read_text(file)
         watch_loop(0n, file, src, src, False{})
     case Nil{}:
