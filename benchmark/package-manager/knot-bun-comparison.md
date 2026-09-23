@@ -25,7 +25,7 @@ Do not treat the times as same-graph.
 - Host: Darwin 25.6.0, arm64
 - CPU: Apple M5
 - Disk: APFS
-- Knot binary: `bin/knot` from commit `KNOT_SHA`, `--version` prints `0.0.0`
+- Knot binary: `bin/knot` from commit `04afe15`, `--version` prints `0.0.0`
 - bun: 1.4.2
 - Node used only to launch the timer: v26.8.1
 
@@ -62,7 +62,7 @@ Cached install after deleting `node_modules`:
 | Tool | Packages linked | min | median | mean | max | no-op |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | bun 1.4.2 | 29 | 28.2 ms | 29.7 ms | 30.7 ms | 33.6 ms | 10.2 ms |
-| knot default (`KNOT_SHA`) | 31 | 42.2 ms | 42.8 ms | 43.4 ms | 45.4 ms | 9.9 ms |
+| knot default (`04afe15`) | 31 | 42.2 ms | 42.8 ms | 43.4 ms | 45.4 ms | 9.9 ms |
 | knot `--reporter silent` | 31 | 42.9 ms | 43.3 ms | 43.4 ms | 44.2 ms | 10.3 ms |
 | knot `--backend hardlink` | 31 | 544.3 ms | 554.0 ms | 552.8 ms | 559.8 ms | 10.4 ms |
 | knot silent + hardlink | 31 | 555.8 ms | 558.5 ms | 560.8 ms | 566.7 ms | 12.6 ms |

@@ -20,7 +20,7 @@ pnpm created `pnpm-lock.yaml` during warmup and reused it (29 packages added).
 - Host: Darwin 25.6.0, arm64
 - CPU: Apple M5
 - Disk: APFS
-- Knot binary: `bin/knot` from commit `KNOT_SHA`, `--version` prints `0.0.0`
+- Knot binary: `bin/knot` from commit `04afe15`, `--version` prints `0.0.0`
 - pnpm: 11.0.5
 - Node used only to launch the timer: v26.8.1
 
@@ -53,7 +53,7 @@ Cached install after deleting `node_modules`:
 
 | Tool | Packages reported | min | median | mean | max | no-op |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| knot `KNOT_SHA` | 31 | 42.2 ms | 42.8 ms | 43.4 ms | 45.4 ms | 9.9 ms |
+| knot `04afe15` | 31 | 42.2 ms | 42.8 ms | 43.4 ms | 45.4 ms | 9.9 ms |
 | pnpm 11.0.5 | 29 | 585.8 ms | 610.4 ms | 610.8 ms | 633.6 ms | 295.8 ms |
 
 Raw Knot runs: 42.68, 42.81, 42.22, 45.40, 43.93 ms.
