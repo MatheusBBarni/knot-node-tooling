@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { runProcess } from "../../support/process.mjs";
 import { stageNpmRelease } from "../../../scripts/stage-npm.mjs";
+import { KnotNodeDriver } from "../../support/node-driver.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 
@@ -65,7 +66,7 @@ test("npm install of the staged tarballs runs the packed knot binary", { timeout
   assert.equal(second.stdout, first.stdout);
   assert.equal(second.stderr, first.stderr);
 
-  const onePackage = await runProcess(process.execPath, [
+  const onePackage = await runProcess(KnotNodeDriver.binary(), [
     "--test",
     path.join(repoRoot, "tests/acceptance/package-manager/install-one-package.test.mjs"),
   ], {

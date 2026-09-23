@@ -211,7 +211,7 @@ The bundler and the test runner are not part of it.
 
 `scripts/build-knot` runs `bend src/knot.bend -o dist/knot.bin`.
 The release job uses that command.
-Bend 2.0.4 and the C compiler are build tools.
+Bend 2.0.24 and the C compiler are build tools.
 They are not files in the npm tarball.
 The release runner installs Bend from `toolchain.json` and checks the SHA-256 recorded there before compiling.
 `BEND_NO_TELEMETRY=1` is set for that install and build.

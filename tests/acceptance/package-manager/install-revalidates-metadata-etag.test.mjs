@@ -6,6 +6,8 @@ import test from "node:test";
 import { npmTarball, sriSha512 } from "../../support/registry.mjs";
 import { runProcess } from "../../support/process.mjs";
 import { makeWorkspace, removeWorkspace } from "../../support/workspace.mjs";
+import { KnotTestHome } from "../../support/home.mjs";
+import { KnotNodeDriver } from "../../support/node-driver.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const knot = process.env.KNOT ?? path.join(repoRoot, "bin/knot");
@@ -100,9 +102,13 @@ test("install revalidates cached registry metadata with If-None-Match", async (t
   });
   t.after(() => removeWorkspace(workspace));
 
+  const home = await KnotTestHome.create(t);
+  const env = KnotTestHome.env(home);
+
   const first = await runProcess(knot, ["install", "--registry", registryUrl], {
     cwd: workspace,
     timeoutMs: 60_000,
+    env,
   });
   assert.equal(first.status, 0, first.stderr);
   assert.deepEqual(ifNoneMatch, [undefined]);
@@ -111,12 +117,13 @@ test("install revalidates cached registry metadata with If-None-Match", async (t
   const second = await runProcess(knot, ["install", "--registry", registryUrl], {
     cwd: workspace,
     timeoutMs: 60_000,
+    env,
   });
   assert.equal(second.status, 0, second.stderr);
   assert.deepEqual(ifNoneMatch, [undefined, etag]);
   assert.equal(tarGets, 1);
 
-  const imported = await runProcess(process.execPath, [
+  const imported = await runProcess(KnotNodeDriver.binary(), [
     "--input-type=module",
     "-e",
     `import { hello } from "${pkgName}"; console.log(hello());`,
