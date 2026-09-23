@@ -95,6 +95,31 @@ def Jsx.lower(source: String, mode: String, factory: String, fragment: String, i
   import "./host/jsx_lower.c"
   import "./host/jsx_lower.js"
 
+def Ts.lower(source: String) ->
+  IO(Result<&1, &1, U32 & String, String>):
+  import "./host/ts_lower.c"
+  import "./host/ts_lower.js"
+
+def Pkg.exports(text: String, subpath: String, conditions: String) ->
+  IO(Result<&1, &1, U32 & String, String>):
+  import "./host/pkg_exports.c"
+  import "./host/pkg_exports.js"
+
+def Pkg.side_effects(text: String, rel: String) ->
+  IO(Result<&1, &1, U32 & String, String>):
+  import "./host/pkg_side_effects.c"
+  import "./host/pkg_side_effects.js"
+
+def Live.imports(source: String) ->
+  IO(Result<&1, &1, U32 & String, String>):
+  import "./host/live_imports.c"
+  import "./host/live_imports.js"
+
+def Pkg.file_side_effects(path: String) ->
+  IO(Result<&1, &1, U32 & String, String>):
+  import "./host/pkg_file_side_effects.c"
+  import "./host/pkg_file_side_effects.js"
+
 def read_open(path: String, r: Result<&1, &1, U32 & String, File>) -> IO(File):
   match r:
     case Fail{_}:
@@ -2404,6 +2429,39 @@ def jsx_prep_mode(tsx: Bool, +src: String, +mode: String, +factory: String, +fra
 def jsx_prep(+file: String, +src: String, +mode: String, +factory: String, +fragment: String, +isrc: String) -> IO(String):
   jsx_prep_mode(is_tsx(file), src, mode, factory, fragment, isrc)
 
+
+def is_ts_go(ts: Bool, tsx: Bool) -> Bool:
+  match ts:
+    case True{}:
+      True{}
+    case False{}:
+      tsx
+
+def is_ts(+file: String) -> Bool:
+  is_ts_go(String.ends_with(file, ".ts"), String.ends_with(file, ".tsx"))
+
+def ts_prep_res(r: Result<&1, &1, U32 & String, String>) -> IO(String):
+  match r:
+    case Fail{_}:
+      IO.die(String, 1, "knot: ts transform failed (syntax_error)")
+    case Done{s}:
+      IO.pure(String, s)
+
+def ts_prep_do(+src: String) -> IO(String):
+  do IO<String>:
+    r : Result<&1, &1, U32 & String, String> <- Ts.lower(src)
+    ts_prep_res(r)
+
+def ts_prep_mode(ts: Bool, +src: String) -> IO(String):
+  match ts:
+    case False{}:
+      IO.pure(String, src)
+    case True{}:
+      ts_prep_do(src)
+
+def ts_prep(+file: String, +src: String) -> IO(String):
+  ts_prep_mode(is_ts(file), src)
+
 def transpile_none(first: Bool) -> IO(Unit):
   match first:
     case True{}:
@@ -2498,7 +2556,8 @@ def transpile_one_v1(+file: String, +src: String, v1: Bool, +sm: String) -> IO(U
 def transpile_one(+file: String, +mode: String, +sm: String, +factory: String, +fragment: String, +isrc: String) -> IO(Unit):
   do IO<Unit>:
     +raw : String <- read_text(file)
-    +src : String <- jsx_prep(file, raw, mode, factory, fragment, isrc)
+    +mid : String <- ts_prep(file, raw)
+    +src : String <- jsx_prep(file, mid, mode, factory, fragment, isrc)
     v1 : Bool <- file_exists(".knot/build-cache/v1")
     transpile_one_v1(file, src, v1, sm)
 
@@ -2506,7 +2565,8 @@ def transpile_one(+file: String, +mode: String, +sm: String, +factory: String, +
 def transpile_one_to_min(+file: String, +out: String, minify: Bool, ids: Bool, +mode: String, +sm: String, +factory: String, +fragment: String, +isrc: String) -> IO(Unit):
   do IO<Unit>:
     raw : String <- read_text(file)
-    src : String <- jsx_prep(file, raw, mode, factory, fragment, isrc)
+    mid : String <- ts_prep(file, raw)
+    src : String <- jsx_prep(file, mid, mode, factory, fragment, isrc)
     transpile_write_to(file, out, Compiler.transpile_opt(file, src, minify, ids), sm)
 
 def transpile_one_to(+file: String, +out: String, +mode: String, +sm: String, +factory: String, +fragment: String, +isrc: String) -> IO(Unit):
@@ -3028,25 +3088,62 @@ def resolve_pkg_exp(+spec: String, +text: String, +exp: String, empty: Bool) -> 
     case False{}:
       resolve_pkg_main_file(spec, exp)
 
-def resolve_pkg_main(+spec: String, +pj: String) -> IO(String):
+def resolve_pkg_cond_ok(+spec: String, +got: String, empty: Bool) -> IO(String):
+  match empty:
+    case True{}:
+      IO.pure(String, "")
+    case False{}:
+      resolve_pkg_main_file(spec, got)
+
+def resolve_pkg_cond_res(+spec: String, +text: String, r: Result<&1, &1, U32 & String, String>) -> IO(String):
+  match r:
+    case Fail{_}:
+      IO.pure(String, "")
+    case Done{+got}:
+      resolve_pkg_cond_ok(spec, got, String.is_empty(got))
+
+def resolve_pkg_try_cond(+spec: String, +text: String, +conds: String) -> IO(String):
+  do IO<String>:
+    r : Result<&1, &1, U32 & String, String> <- Pkg.exports(text, ".", conds)
+    resolve_pkg_cond_res(spec, text, r)
+
+def resolve_pkg_after_cond(+spec: String, +text: String, +via: String, empty: Bool) -> IO(String):
+  match empty:
+    case False{}:
+      IO.pure(String, via)
+    case True{}:
+      do IO<String>:
+        +exp : String <- json_optional_string(text, "exports")
+        resolve_pkg_exp(spec, text, exp, String.is_empty(exp))
+
+def resolve_pkg_main_conds(+spec: String, +pj: String, +conds: String) -> IO(String):
   do IO<String>:
     +text : String <- read_text(pj)
-    +exp : String <- json_optional_string(text, "exports")
-    resolve_pkg_exp(spec, text, exp, String.is_empty(exp))
+    +via : String <- resolve_pkg_try_cond(spec, text, conds)
+    resolve_pkg_after_cond(spec, text, via, String.is_empty(via))
+
+def resolve_pkg_main(+spec: String, +pj: String) -> IO(String):
+  resolve_pkg_main_conds(spec, pj, "import,module,node,default")
 
 
-def resolve_pkg_pj(+spec: String, +pj: String, ex: Bool) -> IO(String):
+def resolve_pkg_pj_conds(+spec: String, +pj: String, ex: Bool, +conds: String) -> IO(String):
   match ex:
     case True{}:
-      resolve_pkg_main(spec, pj)
+      resolve_pkg_main_conds(spec, pj, conds)
     case False{}:
       resolve_pkg_index(spec)
 
-def resolve_pkg(+spec: String) -> IO(String):
+def resolve_pkg_pj(+spec: String, +pj: String, ex: Bool) -> IO(String):
+  resolve_pkg_pj_conds(spec, pj, ex, "import,module,node,default")
+
+def resolve_pkg_conds(+spec: String, +conds: String) -> IO(String):
   do IO<String>:
     +pj : String = Compiler.pkg_json(spec)
     ex : Bool <- file_exists(pj)
-    resolve_pkg_pj(spec, pj, ex)
+    resolve_pkg_pj_conds(spec, pj, ex, conds)
+
+def resolve_pkg(+spec: String) -> IO(String):
+  resolve_pkg_conds(spec, "import,module,node,default")
 
 
 def resolve_rel_ts_ex(+path: String, +ts: String, ex: Bool) -> IO(String):
@@ -3161,43 +3258,61 @@ def alias_match(+line: String, +spec: String) -> String:
         case False{}:
           hit
 
-def resolve_alias_path(+importer: String, +spec: String, +mapped: String, empty: Bool) -> IO(String):
+def resolve_alias_path_conds(+importer: String, +spec: String, +mapped: String, empty: Bool, +conds: String) -> IO(String):
   match empty:
     case True{}:
-      resolve_pkg(spec)
+      resolve_pkg_conds(spec, conds)
     case False{}:
       resolve_rel_file(Compiler.resolve_rel(importer, mapped))
 
-def resolve_tsconfig_pairs(+importer: String, +spec: String, lines: List<&2, String>) -> IO(String):
+def resolve_alias_path(+importer: String, +spec: String, +mapped: String, empty: Bool) -> IO(String):
+  resolve_alias_path_conds(importer, spec, mapped, empty, "import,module,node,default")
+
+def resolve_tsconfig_pairs_conds(+importer: String, +spec: String, lines: List<&2, String>, +conds: String) -> IO(String):
   do IO<String>:
     +mapped : String = alias_pick(0n, lines, spec, "", True{})
-    resolve_alias_path(importer, spec, mapped, String.is_empty(mapped))
+    resolve_alias_path_conds(importer, spec, mapped, String.is_empty(mapped), conds)
 
-def resolve_tsconfig_ex(+importer: String, +spec: String, ex: Bool) -> IO(String):
+def resolve_tsconfig_pairs(+importer: String, +spec: String, lines: List<&2, String>) -> IO(String):
+  resolve_tsconfig_pairs_conds(importer, spec, lines, "import,module,node,default")
+
+def resolve_tsconfig_ex_conds(+importer: String, +spec: String, ex: Bool, +conds: String) -> IO(String):
   match ex:
     case False{}:
-      resolve_pkg(spec)
+      resolve_pkg_conds(spec, conds)
     case True{}:
       do IO<String>:
         text : String <- read_text("tsconfig.json")
         pairs : String <- json_optional_pairs(text, "compilerOptions/paths")
-        resolve_tsconfig_pairs(importer, spec, String.lines(pairs))
+        resolve_tsconfig_pairs_conds(importer, spec, String.lines(pairs), conds)
 
-def resolve_tsconfig(+importer: String, +spec: String) -> IO(String):
+def resolve_tsconfig_ex(+importer: String, +spec: String, ex: Bool) -> IO(String):
+  resolve_tsconfig_ex_conds(importer, spec, ex, "import,module,node,default")
+
+def resolve_tsconfig_conds(+importer: String, +spec: String, +conds: String) -> IO(String):
   do IO<String>:
     ex : Bool <- file_exists("tsconfig.json")
-    resolve_tsconfig_ex(importer, spec, ex)
+    resolve_tsconfig_ex_conds(importer, spec, ex, conds)
 
-def resolve_open_rel(+importer: String, +spec: String, rel: Bool) -> IO(String):
+def resolve_tsconfig(+importer: String, +spec: String) -> IO(String):
+  resolve_tsconfig_conds(importer, spec, "import,module,node,default")
+
+def resolve_open_rel_conds(+importer: String, +spec: String, rel: Bool, +conds: String) -> IO(String):
   match rel:
     case True{}:
       resolve_rel_file(Compiler.resolve_rel(importer, spec))
     case False{}:
-      resolve_tsconfig(importer, spec)
+      resolve_tsconfig_conds(importer, spec, conds)
 
+def resolve_open_rel(+importer: String, +spec: String, rel: Bool) -> IO(String):
+  resolve_open_rel_conds(importer, spec, rel, "import,module,node,default")
+
+def resolve_open_conds(+importer: String, +spec: String, +conds: String) -> IO(String):
+  resolve_open_rel_conds(importer, spec, Compiler.is_rel(spec), conds)
 
 def resolve_open(+importer: String, +spec: String) -> IO(String):
-  resolve_open_rel(importer, spec, Compiler.is_rel(spec))
+  resolve_open_conds(importer, spec, "import,module,node,default")
+
 
 @unsafe def has_file(sel: Nat, xs: List<&2, String>, +f: String, eq: Bool) -> Bool:
   match sel:
@@ -3222,7 +3337,7 @@ def list_app(xs: List<&2, String>, x: String) -> List<&2, String>:
     case Con{h, t}:
       Con{h, list_app(t, x)}
 
-@unsafe def collect_go(sel: Nat, +file: String, imps: List<&2, String>, +visited: List<&2, String>, seen: Bool) -> IO(List<&2, String>):
+@unsafe def collect_go(sel: Nat, +file: String, imps: List<&2, String>, +visited: List<&2, String>, seen: Bool, +conds: String) -> IO(List<&2, String>):
   match sel:
     case 0n:
       match seen:
@@ -3231,7 +3346,7 @@ def list_app(xs: List<&2, String>, x: String) -> List<&2, String>:
         case False{}:
           do IO<List<&2, String>>:
             src : String <- read_text(file)
-            vis2 : List<&2, String> <- collect_go(1n, file, Compiler.imports_of(src), visited, False{})
+            vis2 : List<&2, String> <- collect_go(1n, file, Compiler.imports_of(src), visited, False{}, conds)
             return list_app(vis2, file)
     case _:
       match imps:
@@ -3239,9 +3354,9 @@ def list_app(xs: List<&2, String>, x: String) -> List<&2, String>:
           IO.pure(List<&2, String>, visited)
         case Con{+spec, rest}:
           do IO<List<&2, String>>:
-            +path : String <- resolve_open(file, spec)
-            vis2 : List<&2, String> <- collect_go(0n, path, Nil{}, visited, has_file(0n, visited, path, False{}))
-            collect_go(1n, file, rest, vis2, False{})
+            +path : String <- resolve_open_conds(file, spec, conds)
+            vis2 : List<&2, String> <- collect_go(0n, path, Nil{}, visited, has_file(0n, visited, path, False{}), conds)
+            collect_go(1n, file, rest, vis2, False{}, conds)
 
 def strs_cat(a: List<&2, String>, b: List<&2, String>) -> List<&2, String>:
   match a:
@@ -3250,6 +3365,18 @@ def strs_cat(a: List<&2, String>, b: List<&2, String>) -> List<&2, String>:
     case Con{h, t}:
       Con{h, strs_cat(t, b)}
 
+def live_imports_res(r: Result<&1, &1, U32 & String, String>) -> IO(List<&2, String>):
+  match r:
+    case Fail{_}:
+      IO.pure(List<&2, String>, Nil{})
+    case Done{s}:
+      IO.pure(List<&2, String>, String.lines(s))
+
+def live_imports_of(+src: String) -> IO(List<&2, String>):
+  do IO<List<&2, String>>:
+    r : Result<&1, &1, U32 & String, String> <- Live.imports(src)
+    live_imports_res(r)
+
 def collect_keep(files: List<&2, String>) -> IO(List<&2, String>):
   match files:
     case Nil{}:
@@ -3257,13 +3384,62 @@ def collect_keep(files: List<&2, String>) -> IO(List<&2, String>):
     case Con{+f, rest}:
       do IO<List<&2, String>>:
         src : String <- read_text(f)
+        names : List<&2, String> <- live_imports_of(src)
         more : List<&2, String> <- collect_keep(rest)
-        return strs_cat(Compiler.import_names_of(src), more)
+        return strs_cat(names, more)
 
-def emit_one(+f: String, keep: List<&2, String>, shake: Bool) -> IO(String):
+def se_flag_trim(+s: String) -> String:
+  String.take(s, 1n)
+
+def se_flag_res(r: Result<&1, &1, U32 & String, String>) -> IO(String):
+  match r:
+    case Fail{_}:
+      IO.pure(String, "1")
+    case Done{+s}:
+      IO.pure(String, se_flag_trim(s))
+
+def se_flag_of(+f: String) -> IO(String):
   do IO<String>:
-    src : String <- read_text(f)
-    bundle_js(f, Compiler.transpile_bundle_keep(f, src, keep, shake))
+    r : Result<&1, &1, U32 & String, String> <- Pkg.file_side_effects(f)
+    se_flag_res(r)
+
+def export_names_of(+src: String) -> List<&2, String>:
+  Compiler.exports_of(src)
+
+@unsafe def has_any_keep(sel: Nat, names: List<&2, String>, +keep: List<&2, String>, hit: Bool) -> Bool:
+  match sel:
+    case 0n:
+      match names:
+        case Nil{}:
+          False{}
+        case Con{+h, t}:
+          has_any_keep(1n, t, keep, Compiler.has_name(0n, keep, h, False{}))
+    case _:
+      match hit:
+        case True{}:
+          True{}
+        case False{}:
+          has_any_keep(0n, names, keep, False{})
+
+def emit_one_go(+f: String, +src: String, +keep: List<&2, String>, +shake: Bool, drop: Bool) -> IO(String):
+  match drop:
+    case True{}:
+      IO.pure(String, "")
+    case False{}:
+      bundle_js(f, Compiler.transpile_bundle_keep(f, src, keep, shake))
+
+def emit_one_drop(+f: String, +src: String, +keep: List<&2, String>, +shake: Bool, pure: Bool) -> IO(String):
+  emit_one_go(f, src, keep, shake, Bool.and(shake, Bool.and(pure, Bool.not(has_any_keep(0n, export_names_of(src), keep, False{})))))
+
+def emit_one_se(+f: String, +src: String, +keep: List<&2, String>, +shake: Bool, +se: String) -> IO(String):
+  emit_one_drop(f, src, keep, shake, String.eq(se, "0"))
+
+def emit_one(+f: String, +keep: List<&2, String>, +shake: Bool) -> IO(String):
+  do IO<String>:
+    raw : String <- read_text(f)
+    src : String <- ts_prep(f, raw)
+    se : String <- se_flag_of(f)
+    emit_one_se(f, src, keep, shake, se)
 
 def emit_files(files: List<&2, String>, +keep: List<&2, String>) -> IO(String):
   match files:
@@ -3277,11 +3453,17 @@ def emit_files(files: List<&2, String>, +keep: List<&2, String>) -> IO(String):
         more : String <- emit_files(rest, keep)
         return bundle_concat(js, more)
 
-def bundle_entry(+file: String) -> IO(String):
+def bundle_entry_conds(+file: String, +conds: String) -> IO(String):
   do IO<String>:
-    +files : List<&2, String> <- collect_go(0n, file, Nil{}, Nil{}, False{})
+    +files : List<&2, String> <- collect_go(0n, file, Nil{}, Nil{}, False{}, conds)
     keep : List<&2, String> <- collect_keep(files)
     emit_files(files, keep)
+
+def bundle_entry(+file: String) -> IO(String):
+  bundle_entry_conds(file, "import,module,node,default")
+
+def bundle_files_conds(+file: String, +conds: String) -> IO(List<&2, String>):
+  collect_go(0n, file, Nil{}, Nil{}, False{}, conds)
 
 
 
@@ -3350,7 +3532,8 @@ def dyn_old(+spec: String) -> String:
 def emit_dyn_one(+importer: String, +outdir: String, +spec: String) -> IO(String):
   do IO<String>:
     +path : String <- resolve_open(importer, spec)
-    src : String <- read_text(path)
+    raw : String <- read_text(path)
+    src : String <- ts_prep(path, raw)
     js : String <- bundle_js(path, Compiler.transpile(path, src))
     +got : String <- IO.try(String, Hash.sha512_b64(path))
     +name : String = take_hash(0n, got, 8n, "", 'a', False{}) ++ ".js"
@@ -3376,7 +3559,8 @@ def emit_dyn(+importer: String, +out: String, specs: List<&2, String>) -> IO(Uni
 def emit_req_one(+importer: String, +outdir: String, +spec: String) -> IO(Unit):
   do IO<Unit>:
     +path : String <- resolve_open(importer, spec)
-    src : String <- read_text(path)
+    raw : String <- read_text(path)
+    src : String <- ts_prep(path, raw)
     js : String <- bundle_js(path, Compiler.transpile(path, src))
     transpile_ok_to(Compiler.join_rel(outdir, Compiler.basename(Compiler.js_path(path))), js, Compiler.make_map(path, Nil{}), "linked")
 
@@ -3394,30 +3578,134 @@ def bundle_write_dyn(+file: String, +out: String, +src: String) -> IO(Unit):
     u : Unit <- emit_dyn(file, out, Compiler.dyn_imports_of(src))
     emit_req(file, out, Compiler.requires_of(src))
 
-def bundle_write(+file: String, +out: String) -> IO(Unit):
+def meta_input_one(+f: String) -> IO(String):
+  do IO<String>:
+    src : String <- read_text(f)
+    return Compiler.json_str(f) ++ ":{\"bytes\":" ++ Nat.show(String.length(src)) ++ "}"
+
+def meta_inputs_go(files: List<&2, String>) -> IO(String):
+  match files:
+    case Nil{}:
+      IO.pure(String, "")
+    case Con{+f, Nil{}}:
+      meta_input_one(f)
+    case Con{+f, rest}:
+      do IO<String>:
+        a : String <- meta_input_one(f)
+        b : String <- meta_inputs_go(rest)
+        return a ++ "," ++ b
+
+def meta_write_none(none: Bool, +meta: String, +file: String, +out: String, +js: String, files: List<&2, String>) -> IO(Unit):
+  match none:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      do IO<Unit>:
+        inputs : String <- meta_inputs_go(files)
+        +body : String = "{\"inputs\":{" ++ inputs ++ "},\"outputs\":{" ++ Compiler.json_str(out) ++ ":{\"bytes\":" ++ Nat.show(String.length(js)) ++ "}}}"
+        write_text(meta, body)
+
+def meta_write(+meta: String, +file: String, +out: String, +js: String, files: List<&2, String>) -> IO(Unit):
+  meta_write_none(String.is_empty(meta), meta, file, out, js, files)
+
+def bundle_write_opts(+file: String, +out: String, +conds: String, +meta: String) -> IO(Unit):
   do IO<Unit>:
-    js : String <- bundle_entry(file)
+    +files : List<&2, String> <- bundle_files_conds(file, conds)
+    keep : List<&2, String> <- collect_keep(files)
+    +js : String <- emit_files(files, keep)
     u0 : Unit <- transpile_ok_to(out, js, Compiler.make_map(file, Nil{}), "linked")
+    u1 : Unit <- meta_write(meta, file, out, js, files)
     +src : String <- read_text(file)
     bundle_write_dyn(file, out, src)
 
+def bundle_write(+file: String, +out: String) -> IO(Unit):
+  bundle_write_opts(file, out, "import,module,node,default", "")
 
-
-def run_build_flag(+file: String, +flag: String, +out: String, ok: Bool) -> IO(Unit):
-  match ok:
+def conds_add(+extra: String, +acc: String, empty: Bool) -> String:
+  match empty:
     case True{}:
-      bundle_write(file, out)
+      extra
     case False{}:
-      IO.die(Unit, 2, "knot: bundling is not implemented; use build --no-bundle (bundle_unsupported)")
+      acc ++ "," ++ extra
+
+def conds_join_e(empty: Bool, +extra: String) -> String:
+  match empty:
+    case True{}:
+      "import,module,node,default"
+    case False{}:
+      extra ++ ",import,module,node,default"
+
+def conds_join(+extra: String) -> String:
+  conds_join_e(String.is_empty(extra), extra)
+
+@unsafe def run_build_k(sel: Nat, args: List<&2, String>, +file: String, +out: String, +conds: String, +meta: String, +head: String, rest: List<&2, String>, +which: String, +val: String, b0: Bool, b1: Bool, b2: Bool) -> IO(Unit):
+  match sel:
+    case 0n:
+      match args:
+        case Nil{}:
+          run_build_k(20n, Nil{}, file, out, conds, meta, "", Nil{}, "", "", String.is_empty(file), String.is_empty(out), False{})
+        case Con{+h, r}:
+          run_build_k(1n, Nil{}, file, out, conds, meta, h, r, "", "", String.eq(h, "--outfile"), String.eq(h, "--conditions"), String.eq(h, "--metafile"))
+    case 1n:
+      match b0:
+        case True{}:
+          run_build_k(10n, Nil{}, file, out, conds, meta, head, rest, "outfile", "", False{}, False{}, False{})
+        case False{}:
+          run_build_k(2n, Nil{}, file, out, conds, meta, head, rest, "", "", b1, b2, False{})
+    case 2n:
+      match b0:
+        case True{}:
+          run_build_k(10n, Nil{}, file, out, conds, meta, head, rest, "conditions", "", False{}, False{}, False{})
+        case False{}:
+          run_build_k(3n, Nil{}, file, out, conds, meta, head, rest, "", "", b1, False{}, False{})
+    case 3n:
+      match b0:
+        case True{}:
+          run_build_k(10n, Nil{}, file, out, conds, meta, head, rest, "metafile", "", False{}, False{}, False{})
+        case False{}:
+          run_build_k(21n, Nil{}, file, out, conds, meta, head, rest, "", "", String.is_empty(file), False{}, False{})
+    case 10n:
+      match rest:
+        case Con{+v, tail}:
+          run_build_k(11n, Nil{}, file, out, conds, meta, head, tail, which, v, String.eq(which, "outfile"), String.eq(which, "conditions"), String.eq(which, "metafile"))
+        case Nil{}:
+          IO.die(Unit, 2, "knot: build flag " ++ which ++ " requires a value (unknown_command)")
+    case 11n:
+      match b0:
+        case True{}:
+          run_build_k(0n, rest, file, val, conds, meta, "", Nil{}, "", "", False{}, False{}, False{})
+        case False{}:
+          run_build_k(12n, Nil{}, file, out, conds, meta, head, rest, which, val, b1, b2, False{})
+    case 12n:
+      match b0:
+        case True{}:
+          run_build_k(0n, rest, file, out, conds_add(val, conds, String.is_empty(conds)), meta, "", Nil{}, "", "", False{}, False{}, False{})
+        case False{}:
+          run_build_k(0n, rest, file, out, conds, val, "", Nil{}, "", "", False{}, False{}, False{})
+    case 20n:
+      match b0:
+        case True{}:
+          IO.die(Unit, 2, "knot: build requires a file (missing_input)")
+        case False{}:
+          run_build_k(22n, Nil{}, file, out, conds, meta, "", Nil{}, "", "", b1, False{}, False{})
+    case 21n:
+      match b0:
+        case True{}:
+          run_build_k(0n, rest, head, out, conds, meta, "", Nil{}, "", "", False{}, False{}, False{})
+        case False{}:
+          IO.die(Unit, 2, "knot: unknown build flag " ++ head ++ " (unknown_command)")
+    case 22n:
+      match b0:
+        case True{}:
+          bundle_write_opts(file, Compiler.js_path(file), conds_join(conds), meta)
+        case False{}:
+          bundle_write_opts(file, out, conds_join(conds), meta)
+    case _:
+      IO.die(Unit, 2, "knot: build parse error (unknown_command)")
+
 
 def run_build_out(+file: String, rest: List<&2, String>) -> IO(Unit):
-  match rest:
-    case Con{+flag, Con{+out, Nil{}}}:
-      run_build_flag(file, flag, out, String.eq(flag, "--outfile"))
-    case Nil{}:
-      bundle_write(file, Compiler.js_path(file))
-    case _:
-      IO.die(Unit, 2, "knot: build requires --outfile or --no-bundle (unknown_command)")
+  run_build_k(0n, Con{file, rest}, "", "", "", "", "", Nil{}, "", "", False{}, False{}, False{})
 
 def run_build_nb(no_bundle: Bool, +head: String, rest: List<&2, String>) -> IO(Unit):
   match no_bundle:
@@ -3464,7 +3752,7 @@ def concat_sources(files: List<&2, String>) -> IO(String):
 
 def fingerprint(+file: String) -> IO(String):
   do IO<String>:
-    files : List<&2, String> <- collect_go(0n, file, Nil{}, Nil{}, False{})
+    files : List<&2, String> <- collect_go(0n, file, Nil{}, Nil{}, False{}, "import,module,node,default")
     srcs : String <- concat_sources(files)
     listed : String <- IO.try(String, Fs.read_dir(Compiler.dirname(file)))
     return listed ++ "\n" ++ srcs

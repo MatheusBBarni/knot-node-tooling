@@ -910,7 +910,7 @@ def lex(src: String) -> LexRes:
                                                             case True{}:
                                                               xform(7n, Xs{rest, acc, 0, "", Nil{}, dummy_tok(), f_bool()})
                                                             case False{}:
-                                                              xform(13n, Xs{tokens, acc, 0, text, rest, tok, String.eq(text, "as")})
+                                                              xform(13n, Xs{tokens, acc, 0, text, rest, tok, Bool.or(String.eq(text, "as"), String.eq(text, "satisfies"))})
                                                     case 1n+s13:
                                                       match s13:
                                                         case 0n:
