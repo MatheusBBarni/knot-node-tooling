@@ -9,6 +9,7 @@ if [ ! -x "$BIN" ]; then
   exit 127
 fi
 
+export KNOT_ROOT="$ROOT"
 export KNOT_ARGC="$#"
 n=1
 for arg in "$@"; do

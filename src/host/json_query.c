@@ -218,6 +218,46 @@ static int json_walk(JsonP* p, const char* path) {
   return 1;
 }
 
+static int json_value_as_string(JsonP* p, char* val, size_t val_n) {
+  json_ws(p);
+  if (p->at < p->end && *p->at == '"') {
+    return json_string(p, val, val_n);
+  }
+  if (p->at < p->end && *p->at == '[') {
+    p->at += 1;
+    json_ws(p);
+    if (p->at < p->end && *p->at == ']') {
+      p->at += 1;
+      val[0] = 0;
+      return 1;
+    }
+    if (!json_string(p, val, val_n)) {
+      return 0;
+    }
+    for (;;) {
+      json_ws(p);
+      if (p->at < p->end && *p->at == ',') {
+        p->at += 1;
+        if (!json_skip(p)) {
+          return 0;
+        }
+        continue;
+      }
+      if (p->at < p->end && *p->at == ']') {
+        p->at += 1;
+        return 1;
+      }
+      p->err = 1;
+      return 0;
+    }
+  }
+  if (!json_skip(p)) {
+    return 0;
+  }
+  val[0] = 0;
+  return 1;
+}
+
 static int json_pairs(JsonP* p, char* out, size_t out_n) {
   json_ws(p);
   if (!json_lit(p, "{")) {
@@ -241,7 +281,7 @@ static int json_pairs(JsonP* p, char* out, size_t out_n) {
       return 0;
     }
     json_ws(p);
-    if (!json_string(p, val, sizeof(val))) {
+    if (!json_value_as_string(p, val, sizeof(val))) {
       return 0;
     }
     int w = snprintf(out + n, out_n - n, "%s%s\t%s", n == 0 ? "" : "\n", key, val);

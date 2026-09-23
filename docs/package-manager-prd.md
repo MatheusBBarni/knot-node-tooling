@@ -889,6 +889,12 @@ Registry origin plus integrity prevents silent substitution across public and pr
 Lifecycle scripts execute arbitrary code and are a common supply-chain entry point.
 Packages that need a build step remain supported through explicit approval and private writable copies.
 
+### Publish the knot command as scoped npm packages
+
+The unscoped npm name `knot` is already taken.
+The distribution plan publishes a scoped wrapper whose `bin` is the `knot` command, plus optional platform packages selected with `os`, `cpu`, and `libc`.
+The plan, the release gate, and the gaps in Knot's own installer live in `docs/npm-distribution.md`.
+
 ### Treat GPU execution as a stage-level optimization
 
 A package manager cannot move sockets, filesystem mutation, or process creation to a GPU usefully.
