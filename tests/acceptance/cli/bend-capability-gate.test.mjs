@@ -12,6 +12,11 @@ const pinPath = path.join(repoRoot, "toolchain.json");
 const ccWrapper = path.join(repoRoot, "scripts/cc");
 
 test("pinned Bend toolchain checks a valid program, rejects a false proof, and runs a CPU binary", async (t) => {
+  if (process.versions.bun) {
+    assert.fail(
+      `bun test is not the acceptance driver (Bun reports process.versions.node=${process.versions.node}); use Node.js 24 LTS with node --test`,
+    );
+  }
   const nodeMajor = Number(process.versions.node.split(".")[0]);
   assert.equal(nodeMajor, 24, `Node.js 24 LTS is the acceptance driver, found ${process.versions.node}`);
 
@@ -26,7 +31,7 @@ test("pinned Bend toolchain checks a valid program, rejects a false proof, and r
     ].join(path.delimiter),
   };
 
-  const version = await runProcess("bend", ["--version"], { env, cwd: repoRoot });
+  const version = await runProcess("bend", ["version"], { env, cwd: repoRoot });
   assert.equal(version.status, 0, version.stderr);
   assert.equal(version.stdout, `bend ${pin.bend.version}\n`);
 

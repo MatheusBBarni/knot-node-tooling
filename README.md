@@ -19,7 +19,7 @@ The native coordinator uses an external JavaScript runtime only when generated c
 > `knot install`, `knot transpile`, `knot scan`, `knot analyze`, and a first `knot build` path (including `--watch`) run today.
 > The test runner is still design-only.
 > Transpilation does not type-check and does not emit `.d.ts` files.
-> The Bend2 pin is [`toolchain.json`](./toolchain.json) (Bend 2.0.4).
+> The Bend2 pin is [`toolchain.json`](./toolchain.json) (Bend 2.0.24).
 > Host-effect notes are in [Bend2 capability](./docs/bend2-capability.md).
 
 ## Overview
@@ -183,8 +183,8 @@ Bend2 laws and proofs supplement these tests for pure invariants.
 
 ## Development
 
-Use Node.js 24 LTS.
-Install Bend 2.0.4 from the pin in `toolchain.json`.
+Use Node.js 24 LTS (`package.json` `engines.node` and `toolchain.json`).
+Install Bend 2.0.24 from the pin in `toolchain.json` (`bend version`).
 Native builds need `CC` set to `scripts/cc` on this Mac.
 
 ```text
@@ -192,9 +192,12 @@ Native builds need `CC` set to `scripts/cc` on this Mac.
 node --test
 ```
 
+Do not use `bun test` as the acceptance driver.
+Bun reports a different `process.versions.node`, does not satisfy the Node 24 gate, and breaks nested `node --test` spawns (`process.execPath` is Bun).
+
 ## Roadmap
 
-1. Pin Bend 2.0.4 and prove check, proof, and CPU compile on the JS and native paths.
+1. Pin Bend 2.0.24 and prove check, proof, and CPU compile on the JS and native paths.
 2. Deliver a deterministic npm-compatible resolver, verified store, isolated linker, and secure package lifecycle.
 3. Deliver JavaScript and TypeScript parsing, transpilation, module resolution, source maps, and incremental compilation.
 4. Deliver JavaScript linking, tree shaking, code splitting, CSS, HTML, assets, and atomic production output.

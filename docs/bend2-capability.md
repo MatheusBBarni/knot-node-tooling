@@ -2,13 +2,13 @@
 
 Date: 2026-09-17
 
-Pinned compiler: Bend 2.0.4 (Apache-2.0)
+Pinned compiler: Bend 2.0.24 (Apache-2.0)
 
-Artifact: `https://bend-lang.com/dl/2.0.4.tar.gz`
+Artifact (darwin-arm64): `https://github.com/bendlang/bend/releases/download/v2.0.24/bend-2.0.24-darwin-arm64.tar.gz`
 
-SHA-256: `dff7d7e7b42a4572c79d3084093521d198a93af4684d4a10fe8322c265481734`
+SHA-256: `b17380ac7b8fce5c5c0250d23c9bb6d99cc9737bfca8a9e5428e051325926e1e`
 
-Install: `curl -fsSL https://bend-lang.com/install.sh | sh`
+Install: download the pinned release asset for your OS/arch, or `curl -fsSL https://bend-lang.com/install.sh | sh` and confirm `bend version` matches `toolchain.json`.
 
 The pin lives in `toolchain.json`.
 Tests set `BEND_NO_TELEMETRY=1` so the launcher does not self-update.
@@ -17,7 +17,7 @@ Tests set `BEND_NO_TELEMETRY=1` so the launcher does not self-update.
 
 | Command | Result |
 | --- | --- |
-| `bend --version` | Prints `bend 2.0.4` |
+| `bend version` | Prints `bend 2.0.24` |
 | `bend <file.bend>` | Checks, then runs `main` on the JS backend |
 | `bend <file.bend> -o <bin>` | Checks, then builds a native CPU binary |
 | `bend <file.bend> -o <file.c>` | Emits C |
@@ -78,4 +78,5 @@ Node.js 24 LTS and `node:test` launch Bend and `knot`.
 The focused command is `node --test <file>`.
 The fast command is `node --test`.
 Use Node.js 24, not 26.
+Do not use `bun test`; it is not the acceptance driver.
 
