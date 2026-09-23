@@ -35,7 +35,7 @@ type Lx is Data:
 type Xs is Data:
   Xs{
     tokens: List<&2, Token>,
-    acc: List<&2, String>,
+    acc: List<&2, Token>,
     depth: U32,
     text: String,
     rest: List<&2, Token>,
@@ -134,6 +134,77 @@ def tok_is_ident(s: String) -> Bool:
 
 def colon_is_type(+next: String) -> Bool:
   Bool.or(tok_is_ident(next), Bool.or(String.eq(next, "{"), Bool.or(String.eq(next, "("), String.eq(next, "<"))))
+
+@unsafe def colon_keep(sel: Nat, xs: List<&2, Token>, +p: U32, +b: U32, z: Bool, is_bc: Bool, is_bo: Bool, is_pc: Bool, is_po: Bool, is_q: Bool) -> Bool:
+  match sel:
+    case 0n:
+      match xs:
+        case Nil{}:
+          False{}
+        case Con{Token{+text, start, end, line, col}, rest}:
+          colon_keep(5n, rest, p, b, False{}, String.eq(text, "}"), String.eq(text, "{"), String.eq(text, ")"), String.eq(text, "("), String.eq(text, "?"))
+    case 1n:
+      match z:
+        case True{}:
+          True{}
+        case False{}:
+          colon_keep(0n, xs, p, U32.sub(b, 1), False{}, False{}, False{}, False{}, False{}, False{})
+    case 2n:
+      match z:
+        case True{}:
+          False{}
+        case False{}:
+          colon_keep(0n, xs, U32.sub(p, 1), b, False{}, False{}, False{}, False{}, False{}, False{})
+    case 3n:
+      match z:
+        case True{}:
+          colon_keep(4n, xs, p, b, U32.is_eq(b, 0), False{}, False{}, False{}, False{}, False{})
+        case False{}:
+          colon_keep(0n, xs, p, b, False{}, False{}, False{}, False{}, False{}, False{})
+    case 4n:
+      match z:
+        case True{}:
+          True{}
+        case False{}:
+          colon_keep(0n, xs, p, b, False{}, False{}, False{}, False{}, False{}, False{})
+    case _:
+      match is_bc:
+        case True{}:
+          colon_keep(0n, xs, p, U32.inc(b), False{}, False{}, False{}, False{}, False{}, False{})
+        case False{}:
+          match is_bo:
+            case True{}:
+              colon_keep(1n, xs, p, b, U32.is_eq(b, 0), False{}, False{}, False{}, False{}, False{})
+            case False{}:
+              match is_pc:
+                case True{}:
+                  colon_keep(0n, xs, U32.inc(p), b, False{}, False{}, False{}, False{}, False{}, False{})
+                case False{}:
+                  match is_po:
+                    case True{}:
+                      colon_keep(2n, xs, p, b, U32.is_eq(p, 0), False{}, False{}, False{}, False{}, False{})
+                    case False{}:
+                      match is_q:
+                        case True{}:
+                          colon_keep(3n, xs, p, b, U32.is_eq(p, 0), False{}, False{}, False{}, False{}, False{})
+                        case False{}:
+                          colon_keep(0n, xs, p, b, False{}, False{}, False{}, False{}, False{}, False{})
+
+def colon_keep_go(xs: List<&2, Token>, p: U32, b: U32) -> Bool:
+  colon_keep(0n, xs, p, b, False{}, False{}, False{}, False{}, False{}, False{})
+
+def colon_keep_ctx(acc: List<&2, Token>) -> Bool:
+  colon_keep_go(acc, 0, 0)
+
+def colon_is_type_at_go(keep: Bool, +next: String) -> Bool:
+  match keep:
+    case True{}:
+      False{}
+    case False{}:
+      colon_is_type(next)
+
+def colon_is_type_at(+acc: List<&2, Token>, +next: String) -> Bool:
+  colon_is_type_at_go(colon_keep_ctx(acc), next)
 
 def decl_stop(+text: String, +depth: U32, new_d: U32) -> Bool:
   Bool.or(Bool.and(String.eq(text, ";"), U32.is_eq(depth, 0)), Bool.and(String.eq(text, "}"), U32.is_eq(new_d, 0)))
@@ -245,8 +316,143 @@ def dirname(s: String) -> String:
   join_slash(drop_last(String.split(s, '/')))
 
 
-def make_map(+file: String) -> String:
-  "{\"version\":3,\"file\":" ++ json_str(basename(js_path(file))) ++ ",\"sources\":[" ++ json_str(file) ++ "],\"names\":[],\"mappings\":\"AAAA\"}"
+def tok_lit(+text: String) -> Token:
+  Token{text, 0, 0, 0, 0}
+
+def tok_texts(xs: List<&2, Token>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{Token{+text, start, end, line, col}, t}:
+      Con{text, tok_texts(t)}
+
+def str_len_u32(s: String) -> U32:
+  match s:
+    case SNil{}:
+      0
+    case SCon{_, t}:
+      U32.inc(str_len_u32(t))
+
+@unsafe def nat_of_u32_k(sel: Nat, +x: U32, z: Bool) -> Nat:
+  match sel:
+    case 0n:
+      nat_of_u32_k(1n, x, U32.is_eq(x, 0))
+    case _:
+      match z:
+        case True{}:
+          0n
+        case False{}:
+          1n+nat_of_u32_k(0n, U32.sub(x, 1), False{})
+
+def nat_of_u32(+x: U32) -> Nat:
+  nat_of_u32_k(0n, x, False{})
+
+@unsafe def u32_div_go_k(sel: Nat, +n: U32, +d: U32, q: U32, ge: Bool) -> U32:
+  match sel:
+    case 0n:
+      u32_div_go_k(1n, n, d, q, U32.is_ge(n, d))
+    case _:
+      match ge:
+        case True{}:
+          u32_div_go_k(0n, U32.sub(n, d), d, U32.inc(q), False{})
+        case False{}:
+          q
+
+def u32_div_go(+n: U32, +d: U32, q: U32) -> U32:
+  u32_div_go_k(0n, n, d, q, False{})
+
+@unsafe def u32_mod_go_k(sel: Nat, +n: U32, +d: U32, ge: Bool) -> U32:
+  match sel:
+    case 0n:
+      u32_mod_go_k(1n, n, d, U32.is_ge(n, d))
+    case _:
+      match ge:
+        case True{}:
+          u32_mod_go_k(0n, U32.sub(n, d), d, False{})
+        case False{}:
+          n
+
+def u32_mod_go(+n: U32, +d: U32) -> U32:
+  u32_mod_go_k(0n, n, d, False{})
+
+def b64_digit(+d: U32) -> String:
+  String.take(String.drop("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", nat_of_u32(d)), 1n)
+
+def vlq_signed(+abs_n: U32, neg: Bool) -> U32:
+  match neg:
+    case True{}:
+      U32.inc(U32.add(abs_n, abs_n))
+    case False{}:
+      U32.add(abs_n, abs_n)
+
+@unsafe def vlq_encode_k(sel: Nat, +n: U32, +digit: U32, +rest: U32, z: Bool) -> String:
+  match sel:
+    case 0n:
+      vlq_encode_k(1n, 0, u32_mod_go(n, 32), u32_div_go(n, 32, 0), False{})
+    case 1n:
+      vlq_encode_k(2n, 0, digit, rest, U32.is_eq(rest, 0))
+    case _:
+      match z:
+        case True{}:
+          b64_digit(digit)
+        case False{}:
+          b64_digit(U32.add(digit, 32)) ++ vlq_encode_k(0n, rest, 0, 0, False{})
+
+def vlq_encode_go(n: U32) -> String:
+  vlq_encode_k(0n, n, 0, 0, False{})
+
+def vlq_encode_rest(+digit: U32, +rest: U32) -> String:
+  vlq_encode_k(1n, 0, digit, rest, False{})
+
+def vlq_encode(+abs_n: U32, neg: Bool) -> String:
+  vlq_encode_go(vlq_signed(abs_n, neg))
+
+def vlq_delta_ge(ge: Bool, +prev: U32, +cur: U32) -> String:
+  match ge:
+    case True{}:
+      vlq_encode(U32.sub(cur, prev), False{})
+    case False{}:
+      vlq_encode(U32.sub(prev, cur), True{})
+
+def vlq_delta(+prev: U32, +cur: U32) -> String:
+  vlq_delta_ge(U32.is_ge(cur, prev), prev, cur)
+
+def map_seg(+gen_col: U32, +prev_gc: U32, +src_line: U32, +prev_sl: U32, +src_col: U32, +prev_sc: U32) -> String:
+  vlq_delta(prev_gc, gen_col) ++ vlq_encode(0, False{}) ++ vlq_delta(prev_sl, src_line) ++ vlq_delta(prev_sc, src_col)
+
+def map_segs_emit(first: Bool, +seg: String) -> String:
+  match first:
+    case True{}:
+      seg
+    case False{}:
+      "," ++ seg
+
+# sel: 0=scan xs, 1=empty?, 2=emit+join
+@unsafe def map_segs_k(sel: Nat, xs: List<&2, Token>, +gen_col: U32, +prev_gc: U32, +prev_sl: U32, +prev_sc: U32, +first: Bool, +empty: Bool, +text: String, +line: U32, +col: U32, +prefix: String, +next_col: U32) -> String:
+  match sel:
+    case 0n:
+      match xs:
+        case Nil{}:
+          ""
+        case Con{Token{+text2, start, end, +line2, +col2}, rest}:
+          map_segs_k(1n, rest, gen_col, prev_gc, prev_sl, prev_sc, first, String.is_empty(text2), text2, line2, col2, "", 0)
+    case 1n:
+      match empty:
+        case True{}:
+          map_segs_k(0n, xs, gen_col, prev_gc, prev_sl, prev_sc, first, False{}, "", 0, 0, "", 0)
+        case False{}:
+          map_segs_k(2n, xs, gen_col, prev_gc, prev_sl, prev_sc, first, False{}, text, line, col, map_segs_emit(first, map_seg(gen_col, prev_gc, line, prev_sl, col, prev_sc)), U32.add(U32.add(gen_col, str_len_u32(text)), 1))
+    case _:
+      prefix ++ map_segs_k(0n, xs, next_col, gen_col, line, col, False{}, False{}, "", 0, 0, "", 0)
+
+def map_segs(xs: List<&2, Token>, gen_col: U32, prev_gc: U32, prev_sl: U32, prev_sc: U32, first: Bool) -> String:
+  map_segs_k(0n, xs, gen_col, prev_gc, prev_sl, prev_sc, first, False{}, "", 0, 0, "", 0)
+
+def map_mappings(toks: List<&2, Token>) -> String:
+  map_segs(toks, 0, 0, 0, 0, True{})
+
+def make_map(+file: String, toks: List<&2, Token>) -> String:
+  "{\"version\":3,\"file\":" ++ json_str(basename(js_path(file))) ++ ",\"sources\":[" ++ json_str(file) ++ "],\"names\":[],\"mappings\":" ++ json_str(map_mappings(toks)) ++ "}"
 
 def tok_rev(xs: List<&2, Token>, acc: List<&2, Token>) -> List<&2, Token>:
   match xs:
@@ -323,12 +529,56 @@ def rewrite_texts(xs: List<&2, String>) -> List<&2, String>:
     case Con{+h, t}:
       Con{rewrite_ext(h), rewrite_texts(t)}
 
-def transpile_pick(+file: String, texts: List<&2, String>, minify: Bool) -> TRes:
+def rewrite_tok(+t: Token) -> Token:
+  match t:
+    case Token{+text, +start, +end, +line, +col}:
+      Token{rewrite_ext(text), start, end, line, col}
+
+def rewrite_toks(xs: List<&2, Token>) -> List<&2, Token>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{+h, t}:
+      Con{rewrite_tok(h), rewrite_toks(t)}
+
+def toks_retext(toks: List<&2, Token>, texts: List<&2, String>) -> List<&2, Token>:
+  match toks texts:
+    case Nil{} Nil{}:
+      Nil{}
+    case Con{Token{_, +start, +end, +line, +col}, t1} Con{+h, t2}:
+      Con{Token{h, start, end, line, col}, toks_retext(t1, t2)}
+    case _ _:
+      Nil{}
+
+
+def toks_fork_go(xs: List<&2, Token>, acc_txt: List<&2, String>, acc_tok: List<&2, Token>) -> List<&2, String> & List<&2, Token>:
+  match xs:
+    case Nil{}:
+      (str_rev(acc_txt, Nil{}), tok_rev(acc_tok, Nil{}))
+    case Con{Token{+text, +start, +end, +line, +col}, t}:
+      toks_fork_go(t, Con{text, acc_txt}, Con{Token{text, start, end, line, col}, acc_tok})
+
+def toks_fork(xs: List<&2, Token>) -> List<&2, String> & List<&2, Token>:
+  toks_fork_go(xs, Nil{}, Nil{})
+
+
+def transpile_pick_min(+file: String, pair: List<&2, String> & List<&2, Token>) -> TRes:
+  (texts, toks) = pair
+  TOk{join_min(texts), make_map(file, toks)}
+
+def transpile_pick_full(+file: String, pair: List<&2, String> & List<&2, Token>) -> TRes:
+  (texts, toks) = pair
+  TOk{join_sp(texts), make_map(file, toks)}
+
+def transpile_pick_pair(+file: String, minify: Bool, pair: List<&2, String> & List<&2, Token>) -> TRes:
   match minify:
     case True{}:
-      TOk{join_min(rewrite_texts(texts)), make_map(file)}
+      transpile_pick_min(file, pair)
     case False{}:
-      TOk{join_sp(rewrite_texts(texts)), make_map(file)}
+      transpile_pick_full(file, pair)
+
+def transpile_pick(+file: String, toks: List<&2, Token>, minify: Bool) -> TRes:
+  transpile_pick_pair(file, minify, toks_fork(rewrite_toks(toks)))
 
 
 
@@ -531,26 +781,26 @@ def dummy_tok() -> Token:
 def lex(src: String) -> LexRes:
   lex_go(0n, Lx{src, 0, 0, 0, Nil{}, ' ', SNil{}, 0, 0, 0, f_bool(), f_bool(), f_bool(), f_bool(), f_bool(), f_bool(), f_bool()})
 
-@unsafe def xform(sel: Nat, st: Xs) -> List<&2, String>:
+@unsafe def xform(sel: Nat, st: Xs) -> List<&2, Token>:
   match sel:
     case 0n:
       match st:
         case Xs{+tokens, +acc, depth, text, rest, tok, flag}:
           match tokens:
             case Nil{}:
-              str_rev(acc, Nil{})
+              tok_rev(acc, Nil{})
             case Con{Token{+text2, +start, +end, +line, +col}, rest2}:
               xform(1n, Xs{tokens, acc, 0, text2, rest2, Token{text2, start, end, line, col}, String.eq(text2, ":")})
     case 1n+s1:
       match s1:
         case 0n:
           match st:
-            case Xs{tokens, +acc, depth, +text, +rest, tok, +flag}:
+            case Xs{tokens, +acc, depth, +text, +rest, +tok, +flag}:
               match flag:
                 case True{}:
                   xform(9n, Xs{rest, acc, 0, ":", rest, dummy_tok(), f_bool()})
                 case False{}:
-                  xform(18n, Xs{tokens, acc, 0, text, rest, dummy_tok(), String.eq(text, "enum")})
+                  xform(18n, Xs{tokens, acc, 0, text, rest, tok, String.eq(text, "enum")})
         case 1n+s2:
           match s2:
             case 0n:
@@ -558,7 +808,7 @@ def lex(src: String) -> LexRes:
                 case Xs{+tokens, +acc, +depth, text, rest, tok, flag}:
                   match tokens:
                     case Nil{}:
-                      str_rev(acc, Nil{})
+                      tok_rev(acc, Nil{})
                     case Con{Token{+text2, +start, +end, +line, +col}, rest2}:
                       xform(3n, Xs{tokens, acc, depth, text2, rest2, Token{text2, start, end, line, col}, is_ty_term_at(text2, depth)})
             case 1n+s3:
@@ -575,22 +825,22 @@ def lex(src: String) -> LexRes:
                   match s4:
                     case 0n:
                       match st:
-                        case Xs{tokens, +acc, depth, +text, +rest, tok, +flag}:
+                        case Xs{tokens, +acc, depth, +text, +rest, +tok, +flag}:
                           match flag:
                             case True{}:
                               xform(14n, Xs{rest, acc, 0, "import", rest, dummy_tok(), f_bool()})
                             case False{}:
-                              xform(12n, Xs{tokens, acc, 0, text, rest, dummy_tok(), is_type_kw(text)})
+                              xform(12n, Xs{tokens, acc, 0, text, rest, tok, is_type_kw(text)})
                     case 1n+s5:
                       match s5:
                         case 0n:
                           match st:
-                            case Xs{tokens, +acc, depth, +text, +rest, tok, +flag}:
+                            case Xs{tokens, +acc, depth, +text, +rest, +tok, +flag}:
                               match flag:
                                 case True{}:
                                   xform(6n, Xs{rest, acc, 0, "export", rest, dummy_tok(), f_bool()})
                                 case False{}:
-                                  xform(0n, Xs{rest, Con{text, acc}, 0, "", Nil{}, dummy_tok(), f_bool()})
+                                  xform(0n, Xs{rest, Con{tok, acc}, 0, "", Nil{}, dummy_tok(), f_bool()})
                         case 1n+s6:
                           match s6:
                             case 0n:
@@ -598,7 +848,7 @@ def lex(src: String) -> LexRes:
                                 case Xs{+tokens, +acc, depth, text, rest, tok, flag}:
                                   match tokens:
                                     case Nil{}:
-                                      xform(0n, Xs{Nil{}, Con{"export", acc}, 0, "", Nil{}, dummy_tok(), f_bool()})
+                                      xform(0n, Xs{Nil{}, Con{tok_lit("export"), acc}, 0, "", Nil{}, dummy_tok(), f_bool()})
                                     case Con{Token{+text2, start, end, line, col}, rest2}:
                                       xform(11n, Xs{tokens, acc, 0, text2, rest2, dummy_tok(), is_type_kw(text2)})
                             case 1n+s7:
@@ -608,7 +858,7 @@ def lex(src: String) -> LexRes:
                                     case Xs{+tokens, +acc, +depth, text, rest, tok, flag}:
                                       match tokens:
                                         case Nil{}:
-                                          str_rev(acc, Nil{})
+                                          tok_rev(acc, Nil{})
                                         case Con{Token{+text2, start, end, line, col}, +rest2}:
                                           xform(8n, Xs{rest2, acc, depth, text2, rest2, dummy_tok(), decl_stop(text2, depth, decl_depth(text2, depth))})
                                 case 1n+s8:
@@ -628,9 +878,9 @@ def lex(src: String) -> LexRes:
                                             case Xs{+tokens, +acc, depth, text, rest, tok, flag}:
                                               match tokens:
                                                 case Nil{}:
-                                                  xform(0n, Xs{Nil{}, Con{":", acc}, 0, "", Nil{}, dummy_tok(), f_bool()})
+                                                  xform(0n, Xs{Nil{}, Con{tok_lit(":"), acc}, 0, "", Nil{}, dummy_tok(), f_bool()})
                                                 case Con{Token{+text2, start, end, line, col}, rest2}:
-                                                  xform(10n, Xs{tokens, acc, 0, text2, rest2, dummy_tok(), colon_is_type(text2)})
+                                                  xform(10n, Xs{tokens, acc, 0, text2, rest2, dummy_tok(), colon_is_type_at(acc, text2)})
                                         case 1n+s10:
                                           match s10:
                                             case 0n:
@@ -640,7 +890,7 @@ def lex(src: String) -> LexRes:
                                                     case True{}:
                                                       xform(2n, Xs{tokens, acc, 0, "", Nil{}, dummy_tok(), f_bool()})
                                                     case False{}:
-                                                      xform(0n, Xs{tokens, Con{":", acc}, 0, "", Nil{}, dummy_tok(), f_bool()})
+                                                      xform(0n, Xs{tokens, Con{tok_lit(":"), acc}, 0, "", Nil{}, dummy_tok(), f_bool()})
                                             case 1n+s11:
                                               match s11:
                                                 case 0n:
@@ -650,27 +900,27 @@ def lex(src: String) -> LexRes:
                                                         case True{}:
                                                           xform(0n, Xs{tokens, acc, 0, "", Nil{}, dummy_tok(), f_bool()})
                                                         case False{}:
-                                                          xform(0n, Xs{tokens, Con{"export", acc}, 0, "", Nil{}, dummy_tok(), f_bool()})
+                                                          xform(0n, Xs{tokens, Con{tok_lit("export"), acc}, 0, "", Nil{}, dummy_tok(), f_bool()})
                                                 case 1n+s12:
                                                   match s12:
                                                     case 0n:
                                                       match st:
-                                                        case Xs{tokens, +acc, depth, +text, +rest, tok, +flag}:
+                                                        case Xs{tokens, +acc, depth, +text, +rest, +tok, +flag}:
                                                           match flag:
                                                             case True{}:
                                                               xform(7n, Xs{rest, acc, 0, "", Nil{}, dummy_tok(), f_bool()})
                                                             case False{}:
-                                                              xform(13n, Xs{tokens, acc, 0, text, rest, dummy_tok(), String.eq(text, "as")})
+                                                              xform(13n, Xs{tokens, acc, 0, text, rest, tok, String.eq(text, "as")})
                                                     case 1n+s13:
                                                       match s13:
                                                         case 0n:
                                                           match st:
-                                                            case Xs{tokens, +acc, depth, +text, +rest, tok, +flag}:
+                                                            case Xs{tokens, +acc, depth, +text, +rest, +tok, +flag}:
                                                               match flag:
                                                                 case True{}:
                                                                   xform(2n, Xs{rest, acc, 0, "", Nil{}, dummy_tok(), f_bool()})
                                                                 case False{}:
-                                                                  xform(5n, Xs{tokens, acc, 0, text, rest, dummy_tok(), String.eq(text, "export")})
+                                                                  xform(5n, Xs{tokens, acc, 0, text, rest, tok, String.eq(text, "export")})
                                                         case 1n+s14:
                                                           match s14:
                                                             case 0n:
@@ -678,7 +928,7 @@ def lex(src: String) -> LexRes:
                                                                 case Xs{+tokens, +acc, depth, text, rest, tok, flag}:
                                                                   match tokens:
                                                                     case Nil{}:
-                                                                      xform(0n, Xs{Nil{}, Con{"import", acc}, 0, "", Nil{}, dummy_tok(), f_bool()})
+                                                                      xform(0n, Xs{Nil{}, Con{tok_lit("import"), acc}, 0, "", Nil{}, dummy_tok(), f_bool()})
                                                                     case Con{Token{+text2, start, end, line, col}, rest2}:
                                                                       xform(15n, Xs{tokens, acc, 0, text2, rest2, dummy_tok(), String.eq(text2, "type")})
                                                             case 1n+s15:
@@ -690,7 +940,7 @@ def lex(src: String) -> LexRes:
                                                                         case True{}:
                                                                           xform(16n, Xs{tokens, acc, 0, "", Nil{}, dummy_tok(), f_bool()})
                                                                         case False{}:
-                                                                          xform(0n, Xs{tokens, Con{"import", acc}, 0, "", Nil{}, dummy_tok(), f_bool()})
+                                                                          xform(0n, Xs{tokens, Con{tok_lit("import"), acc}, 0, "", Nil{}, dummy_tok(), f_bool()})
                                                                 case 1n+s16:
                                                                   match s16:
                                                                     case 0n:
@@ -698,7 +948,7 @@ def lex(src: String) -> LexRes:
                                                                         case Xs{+tokens, +acc, depth, text, rest, tok, flag}:
                                                                           match tokens:
                                                                             case Nil{}:
-                                                                              str_rev(acc, Nil{})
+                                                                              tok_rev(acc, Nil{})
                                                                             case Con{Token{+text2, start, end, line, col}, +rest2}:
                                                                               xform(17n, Xs{rest2, acc, 0, text2, rest2, dummy_tok(), String.eq(text2, ";")})
                                                                     case 1n+s17:
@@ -715,12 +965,12 @@ def lex(src: String) -> LexRes:
                                                                           match s18:
                                                                             case 0n:
                                                                               match st:
-                                                                                case Xs{tokens, +acc, depth, +text, +rest, tok, +flag}:
+                                                                                case Xs{tokens, +acc, depth, +text, +rest, +tok, +flag}:
                                                                                   match flag:
                                                                                     case True{}:
-                                                                                      xform(19n, Xs{rest, Con{"const", acc}, 0, "", rest, dummy_tok(), f_bool()})
+                                                                                      xform(19n, Xs{rest, Con{tok_lit("const"), acc}, 0, "", rest, dummy_tok(), f_bool()})
                                                                                     case False{}:
-                                                                                      xform(4n, Xs{tokens, acc, 0, text, rest, dummy_tok(), String.eq(text, "import")})
+                                                                                      xform(4n, Xs{tokens, acc, 0, text, rest, tok, String.eq(text, "import")})
                                                                             case 1n+s19:
                                                                               match s19:
                                                                                 case 0n:
@@ -728,9 +978,9 @@ def lex(src: String) -> LexRes:
                                                                                     case Xs{+tokens, +acc, depth, text, rest, tok, flag}:
                                                                                       match tokens:
                                                                                         case Nil{}:
-                                                                                          str_rev(acc, Nil{})
+                                                                                          tok_rev(acc, Nil{})
                                                                                         case Con{Token{+text2, start, end, line, col}, rest2}:
-                                                                                          xform(20n, Xs{rest2, Con{"=", Con{text2, acc}}, 0, "", rest2, dummy_tok(), f_bool()})
+                                                                                          xform(20n, Xs{rest2, Con{tok_lit("="), Con{Token{text2, start, end, line, col}, acc}}, 0, "", rest2, dummy_tok(), f_bool()})
                                                                                 case 1n+s20:
                                                                                   match s20:
                                                                                     case 0n:
@@ -738,7 +988,7 @@ def lex(src: String) -> LexRes:
                                                                                         case Xs{+tokens, +acc, depth, text, rest, tok, flag}:
                                                                                           match tokens:
                                                                                             case Nil{}:
-                                                                                              str_rev(acc, Nil{})
+                                                                                              tok_rev(acc, Nil{})
                                                                                             case Con{Token{+text2, start, end, line, col}, +rest2}:
                                                                                               xform(21n, Xs{rest2, acc, 0, text2, rest2, dummy_tok(), String.eq(text2, "=")})
                                                                                     case 1n+s21:
@@ -748,21 +998,21 @@ def lex(src: String) -> LexRes:
                                                                                             case Xs{tokens, +acc, depth, +text, +rest, tok, +flag}:
                                                                                               match flag:
                                                                                                 case True{}:
-                                                                                                  xform(20n, Xs{rest, Con{":", acc}, 0, "", rest, dummy_tok(), f_bool()})
+                                                                                                  xform(20n, Xs{rest, Con{tok_lit(":"), acc}, 0, "", rest, dummy_tok(), f_bool()})
                                                                                                 case False{}:
-                                                                                                  xform(22n, Xs{rest, Con{text, acc}, 0, text, rest, dummy_tok(), String.eq(text, "}")})
+                                                                                                  xform(22n, Xs{rest, Con{tok_lit(text), acc}, 0, text, rest, dummy_tok(), String.eq(text, "}")})
                                                                                         case _:
                                                                                           match st:
                                                                                             case Xs{tokens, +acc, depth, text, +rest, tok, +flag}:
                                                                                               match flag:
                                                                                                 case True{}:
-                                                                                                  xform(0n, Xs{rest, Con{";", acc}, 0, "", Nil{}, dummy_tok(), f_bool()})
+                                                                                                  xform(0n, Xs{rest, Con{tok_lit(";"), acc}, 0, "", Nil{}, dummy_tok(), f_bool()})
                                                                                                 case False{}:
                                                                                                   xform(20n, Xs{rest, acc, 0, "", rest, dummy_tok(), f_bool()})
 
 
-def transpile_emit(+file: String, texts: List<&2, String>) -> TRes:
-  TOk{join_sp(rewrite_texts(texts)), make_map(file)}
+def transpile_emit(+file: String, toks: List<&2, Token>) -> TRes:
+  transpile_pick_full(file, toks_fork(rewrite_toks(toks)))
 
 def transpile_lex(+file: String, lr: LexRes) -> TRes:
   match lr:
@@ -784,6 +1034,9 @@ def transpile_lex_min(+file: String, lr: LexRes, minify: Bool) -> TRes:
 def transpile_min(+file: String, source: String, minify: Bool) -> TRes:
   transpile_lex_min(file, lex(source), minify)
 
+
+def export_kw(+t: String) -> Bool:
+  Bool.or(String.eq(t, "function"), Bool.or(String.eq(t, "const"), Bool.or(String.eq(t, "let"), Bool.or(String.eq(t, "var"), String.eq(t, "class")))))
 
 @unsafe def scan_go(sel: Nat, st: Sc) -> List<&2, String>:
   match sel:
@@ -814,7 +1067,7 @@ def transpile_min(+file: String, source: String, minify: Bool) -> TRes:
                     case Nil{}:
                       str_rev(acc, Nil{})
                     case Con{Token{+text2, start, end, line, col}, rest2}:
-                      scan_go(3n, Sc{rest2, acc, text2, String.eq(text2, "function")})
+                      scan_go(3n, Sc{rest2, acc, text2, export_kw(text2)})
             case 1n+s3:
               match s3:
                 case 0n:
@@ -1136,6 +1389,16 @@ def imports_lex(lr: LexRes) -> List<&2, String>:
 
 def imports_of(source: String) -> List<&2, String>:
   imports_lex(lex(source))
+
+def exports_lex(lr: LexRes) -> List<&2, String>:
+  match lr:
+    case LexErr{msg, line, col}:
+      Nil{}
+    case LexOk{tokens}:
+      scan_go(0n, Sc{tokens, Nil{}, "", f_bool()})
+
+def exports_of(source: String) -> List<&2, String>:
+  exports_lex(lex(source))
 
 @unsafe def strip_ie(sel: Nat, st: Ts) -> List<&2, Token>:
   match sel:
@@ -1483,12 +1746,26 @@ def min_ids_if(xs: List<&2, String>, ids: Bool) -> List<&2, String>:
     case False{}:
       xs
 
+def min_ids_toks_fork(pair: List<&2, String> & List<&2, Token>) -> List<&2, Token>:
+  (texts, toks) = pair
+  toks_retext(toks, min_ids(texts))
+
+def min_ids_toks(toks: List<&2, Token>) -> List<&2, Token>:
+  min_ids_toks_fork(toks_fork(toks))
+
+def min_ids_toks_if(toks: List<&2, Token>, ids: Bool) -> List<&2, Token>:
+  match ids:
+    case True{}:
+      min_ids_toks(toks)
+    case False{}:
+      toks
+
 def transpile_lex_opt(+file: String, lr: LexRes, minify: Bool, ids: Bool) -> TRes:
   match lr:
     case LexErr{msg, line, col}:
       TErr{msg, line, col}
     case LexOk{tokens}:
-      transpile_pick(file, min_ids_if(xform(0n, Xs{tokens, Nil{}, 0, "", Nil{}, dummy_tok(), f_bool()}), ids), minify)
+      transpile_pick(file, min_ids_toks_if(xform(0n, Xs{tokens, Nil{}, 0, "", Nil{}, dummy_tok(), f_bool()}), ids), minify)
 
 def transpile_opt(+file: String, source: String, minify: Bool, ids: Bool) -> TRes:
   transpile_lex_opt(file, lex(source), minify, ids)

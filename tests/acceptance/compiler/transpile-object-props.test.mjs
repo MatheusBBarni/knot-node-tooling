@@ -8,26 +8,20 @@ import { makeWorkspace, removeWorkspace } from "../../support/workspace.mjs";
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const knot = process.env.KNOT ?? path.join(repoRoot, "bin/knot");
 
-test("transpile lowers automatic JSX with runtime import", async (t) => {
+test("transpile keeps object property values after type stripping", async (t) => {
   const workspace = await makeWorkspace({
     "package.json": JSON.stringify({ name: "app", type: "module" }),
-    "input.tsx": "export const el = <div className=\"a\">{x}</div>;\n",
+    "input.ts":
+      "type Id = string;\nexport const o = { a: 1, b: name };\nexport function f(x: Id): Id { return x; }\n",
   });
   t.after(() => removeWorkspace(workspace));
 
-  const result = await runProcess(
-    knot,
-    ["transpile", "--jsx-runtime", "automatic", "input.tsx"],
-    { cwd: workspace },
-  );
+  const result = await runProcess(knot, ["transpile", "input.ts"], { cwd: workspace });
   assert.equal(result.status, 0, result.stderr);
 
   const js = await readFile(path.join(workspace, "input.js"), "utf8");
-  assert.match(js, /from\s+["']react\/jsx-runtime["']/);
-  assert.match(js, /\bjsx(s)?\s*\(/);
-  assert.match(js, /["']div["']/);
-  assert.match(js, /className/);
-  assert.match(js, /children\s*:\s*x/);
-  assert.doesNotMatch(js, /React\.createElement/);
-  assert.doesNotMatch(js, /<\s*div/);
+  assert.match(js, /b\s*:\s*name/);
+  assert.match(js, /a\s*:\s*1/);
+  assert.doesNotMatch(js, /:\s*Id/);
+  assert.doesNotMatch(js, /\btype\s+Id\b/);
 });

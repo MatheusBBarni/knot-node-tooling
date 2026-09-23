@@ -90,7 +90,7 @@ def Json.query(text: String, path: String, mode: String) ->
   import "./host/json_query.c"
   import "./host/json_query.js"
 
-def Jsx.lower(source: String, mode: String) ->
+def Jsx.lower(source: String, mode: String, factory: String, fragment: String, import_source: String) ->
   IO(Result<&1, &1, U32 & String, String>):
   import "./host/jsx_lower.c"
   import "./host/jsx_lower.js"
@@ -2372,15 +2372,8 @@ def is_tsx_go(tsx: Bool, jsx: Bool) -> Bool:
 def is_tsx(+file: String) -> Bool:
   is_tsx_go(String.ends_with(file, ".tsx"), String.ends_with(file, ".jsx"))
 
-def jsx_mode_or_go(auto: Bool) -> String:
-  match auto:
-    case True{}:
-      "automatic"
-    case False{}:
-      "classic"
-
-def jsx_mode_or(+mode: String) -> String:
-  jsx_mode_or_go(String.eq(mode, "automatic"))
+def jsx_mode_ok(+mode: String) -> Bool:
+  Bool.or(String.eq(mode, "classic"), Bool.or(String.eq(mode, "automatic"), String.eq(mode, "preserve")))
 
 def jsx_prep_res(r: Result<&1, &1, U32 & String, String>) -> IO(String):
   match r:
@@ -2389,20 +2382,27 @@ def jsx_prep_res(r: Result<&1, &1, U32 & String, String>) -> IO(String):
     case Done{s}:
       IO.pure(String, s)
 
-def jsx_prep_do(+src: String, +mode: String) -> IO(String):
+def jsx_prep_do(+src: String, +mode: String, +factory: String, +fragment: String, +isrc: String) -> IO(String):
   do IO<String>:
-    r : Result<&1, &1, U32 & String, String> <- Jsx.lower(src, mode)
+    r : Result<&1, &1, U32 & String, String> <- Jsx.lower(src, mode, factory, fragment, isrc)
     jsx_prep_res(r)
 
-def jsx_prep_go(tsx: Bool, +src: String, +mode: String) -> IO(String):
-  match tsx:
+def jsx_prep_mode_pres(pres: Bool, +src: String, +mode: String, +factory: String, +fragment: String, +isrc: String) -> IO(String):
+  match pres:
     case True{}:
-      jsx_prep_do(src, jsx_mode_or(mode))
+      IO.pure(String, src)
+    case False{}:
+      jsx_prep_do(src, mode, factory, fragment, isrc)
+
+def jsx_prep_mode(tsx: Bool, +src: String, +mode: String, +factory: String, +fragment: String, +isrc: String) -> IO(String):
+  match tsx:
     case False{}:
       IO.pure(String, src)
+    case True{}:
+      jsx_prep_mode_pres(String.eq(mode, "preserve"), src, mode, factory, fragment, isrc)
 
-def jsx_prep(+file: String, +src: String, +mode: String) -> IO(String):
-  jsx_prep_go(is_tsx(file), src, mode)
+def jsx_prep(+file: String, +src: String, +mode: String, +factory: String, +fragment: String, +isrc: String) -> IO(String):
+  jsx_prep_mode(is_tsx(file), src, mode, factory, fragment, isrc)
 
 def transpile_none(first: Bool) -> IO(Unit):
   match first:
@@ -2411,146 +2411,243 @@ def transpile_none(first: Bool) -> IO(Unit):
     case False{}:
       IO.pure(Unit, Unit{})
 
-def transpile_ok_to(+jsp: String, js: String, map: String) -> IO(Unit):
+def transpile_write_js_none(none: Bool, +jsp: String, +js: String) -> IO(Unit):
+  match none:
+    case True{}:
+      write_text(jsp, js ++ "\n")
+    case False{}:
+      write_text(jsp, js ++ "\n//# sourceMappingURL=" ++ Compiler.basename(jsp) ++ ".map\n")
+
+def transpile_write_js_ext(ext: Bool, +jsp: String, +js: String, +sm: String) -> IO(Unit):
+  match ext:
+    case True{}:
+      write_text(jsp, js ++ "\n")
+    case False{}:
+      transpile_write_js_none(String.eq(sm, "none"), jsp, js)
+
+def transpile_write_js(+jsp: String, +js: String, +sm: String) -> IO(Unit):
+  transpile_write_js_ext(String.eq(sm, "external"), jsp, js, sm)
+
+def transpile_write_map_none(none: Bool, +jsp: String, +map: String) -> IO(Unit):
+  match none:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      write_text(jsp ++ ".map", map)
+
+def transpile_write_map(+jsp: String, +map: String, +sm: String) -> IO(Unit):
+  transpile_write_map_none(String.eq(sm, "none"), jsp, map)
+
+def transpile_ok_to(+jsp: String, js: String, map: String, +sm: String) -> IO(Unit):
   do IO<Unit>:
     u0 : Unit <- IO.try(Unit, Fs.mkdir_p(Compiler.dirname(jsp)))
     u1 : Unit <- IO.try(Unit, Fs.mkdir_p(".knot/build-cache"))
     u2 : Unit <- write_text(".knot/build-cache/v1", "1")
-    u3 : Unit <- write_text(jsp, js ++ "\n//# sourceMappingURL=" ++ Compiler.basename(jsp) ++ ".map\n")
-    write_text(jsp ++ ".map", map)
+    u3 : Unit <- transpile_write_js(jsp, js, sm)
+    transpile_write_map(jsp, map, sm)
 
 
-def transpile_ok(+file: String, js: String, map: String) -> IO(Unit):
-  transpile_ok_to(Compiler.js_path(file), js, map)
+def transpile_ok(+file: String, js: String, map: String, +sm: String) -> IO(Unit):
+  transpile_ok_to(Compiler.js_path(file), js, map, sm)
 
-def transpile_write(+file: String, r: Compiler.TRes) -> IO(Unit):
+def transpile_write(+file: String, r: Compiler.TRes, +sm: String) -> IO(Unit):
   match r:
     case Compiler.TOk{js, map}:
-      transpile_ok(file, js, map)
+      transpile_ok(file, js, map, sm)
     case Compiler.TErr{msg, line, col}:
       IO.die(Unit, 1, "knot: " ++ file ++ ":" ++ U32.show(U32.inc(line)) ++ ":" ++ U32.show(U32.inc(col)) ++ ": " ++ msg ++ " (syntax_error)")
 
-def transpile_write_to(+file: String, +jsp: String, r: Compiler.TRes) -> IO(Unit):
+def transpile_write_to(+file: String, +jsp: String, r: Compiler.TRes, +sm: String) -> IO(Unit):
   match r:
     case Compiler.TOk{js, map}:
-      transpile_ok_to(jsp, js, map)
+      transpile_ok_to(jsp, js, map, sm)
     case Compiler.TErr{msg, line, col}:
       IO.die(Unit, 1, "knot: " ++ file ++ ":" ++ U32.show(U32.inc(line)) ++ ":" ++ U32.show(U32.inc(col)) ++ ": " ++ msg ++ " (syntax_error)")
 
-def transpile_one_miss(+file: String, +src: String) -> IO(Unit):
+def transpile_one_miss(+file: String, +src: String, +sm: String) -> IO(Unit):
   do IO<Unit>:
-    u : Unit <- transpile_write(file, Compiler.transpile(file, src))
+    u : Unit <- transpile_write(file, Compiler.transpile(file, src), sm)
     write_text(".knot/build-cache/src", src)
 
-def transpile_one_eq(+file: String, +src: String, eq: Bool) -> IO(Unit):
+def transpile_one_eq(+file: String, +src: String, eq: Bool, +sm: String) -> IO(Unit):
   match eq:
     case True{}:
       IO.pure(Unit, Unit{})
     case False{}:
-      transpile_one_miss(file, src)
+      transpile_one_miss(file, src, sm)
 
-def transpile_one_src_ex(+file: String, +src: String, ex: Bool) -> IO(Unit):
+def transpile_one_src_ex(+file: String, +src: String, ex: Bool, +sm: String) -> IO(Unit):
   match ex:
     case False{}:
-      transpile_one_miss(file, src)
+      transpile_one_miss(file, src, sm)
     case True{}:
       do IO<Unit>:
         +c : String <- read_text(".knot/build-cache/src")
-        transpile_one_eq(file, src, String.eq(src, c))
+        transpile_one_eq(file, src, String.eq(src, c), sm)
 
-def transpile_one_v1(+file: String, +src: String, v1: Bool) -> IO(Unit):
+def transpile_one_v1(+file: String, +src: String, v1: Bool, +sm: String) -> IO(Unit):
   match v1:
     case False{}:
-      transpile_one_miss(file, src)
+      transpile_one_miss(file, src, sm)
     case True{}:
       do IO<Unit>:
         ex : Bool <- file_exists(".knot/build-cache/src")
-        transpile_one_src_ex(file, src, ex)
+        transpile_one_src_ex(file, src, ex, sm)
 
 
-def transpile_one(+file: String, +mode: String) -> IO(Unit):
+def transpile_one(+file: String, +mode: String, +sm: String, +factory: String, +fragment: String, +isrc: String) -> IO(Unit):
   do IO<Unit>:
     +raw : String <- read_text(file)
-    +src : String <- jsx_prep(file, raw, mode)
+    +src : String <- jsx_prep(file, raw, mode, factory, fragment, isrc)
     v1 : Bool <- file_exists(".knot/build-cache/v1")
-    transpile_one_v1(file, src, v1)
+    transpile_one_v1(file, src, v1, sm)
 
 
-def transpile_one_to_min(+file: String, +out: String, minify: Bool, ids: Bool, +mode: String) -> IO(Unit):
+def transpile_one_to_min(+file: String, +out: String, minify: Bool, ids: Bool, +mode: String, +sm: String, +factory: String, +fragment: String, +isrc: String) -> IO(Unit):
   do IO<Unit>:
     raw : String <- read_text(file)
-    src : String <- jsx_prep(file, raw, mode)
-    transpile_write_to(file, out, Compiler.transpile_opt(file, src, minify, ids))
+    src : String <- jsx_prep(file, raw, mode, factory, fragment, isrc)
+    transpile_write_to(file, out, Compiler.transpile_opt(file, src, minify, ids), sm)
 
-def transpile_one_to(+file: String, +out: String, +mode: String) -> IO(Unit):
-  transpile_one_to_min(file, out, False{}, False{}, mode)
+def transpile_one_to(+file: String, +out: String, +mode: String, +sm: String, +factory: String, +fragment: String, +isrc: String) -> IO(Unit):
+  transpile_one_to_min(file, out, False{}, False{}, mode, sm, factory, fragment, isrc)
 
 
-def transpile_files(args: List<&2, String>, first: Bool, +mode: String) -> IO(Unit):
+def transpile_files(args: List<&2, String>, first: Bool, +mode: String, +sm: String, +factory: String, +fragment: String, +isrc: String) -> IO(Unit):
   match args:
     case Nil{}:
       transpile_none(first)
     case Con{+file, rest}:
       do IO<Unit>:
-        u : Unit <- transpile_one(file, mode)
-        transpile_files(rest, False{}, mode)
+        u : Unit <- transpile_one(file, mode, sm, factory, fragment, isrc)
+        transpile_files(rest, False{}, mode, sm, factory, fragment, isrc)
 
-def run_tp_ok_min(+file: String, +flag: String, +out: String, ok: Bool, minify: Bool, ids: Bool, +mode: String) -> IO(Unit):
+def run_tp_ok_min(+file: String, +flag: String, +out: String, ok: Bool, minify: Bool, ids: Bool, +mode: String, +sm: String, +factory: String, +fragment: String, +isrc: String) -> IO(Unit):
   match ok:
     case True{}:
-      transpile_one_to_min(file, out, minify, ids, mode)
+      transpile_one_to_min(file, out, minify, ids, mode, sm, factory, fragment, isrc)
     case False{}:
-      transpile_files(Con{file, Con{flag, Con{out, Nil{}}}}, True{}, mode)
+      transpile_files(Con{file, Con{flag, Con{out, Nil{}}}}, True{}, mode, sm, factory, fragment, isrc)
 
-def run_transpile_args(args: List<&2, String>, minify: Bool, ids: Bool, +mode: String) -> IO(Unit):
+def run_transpile_args(args: List<&2, String>, minify: Bool, ids: Bool, +mode: String, +sm: String, +factory: String, +fragment: String, +isrc: String) -> IO(Unit):
   match args:
     case Con{+file, Con{+flag, Con{+out, Nil{}}}}:
-      run_tp_ok_min(file, flag, out, String.eq(flag, "--outfile"), minify, ids, mode)
+      run_tp_ok_min(file, flag, out, String.eq(flag, "--outfile"), minify, ids, mode, sm, factory, fragment, isrc)
     case _:
-      transpile_files(args, True{}, mode)
+      transpile_files(args, True{}, mode, sm, factory, fragment, isrc)
 
-def run_transpile_i(+head: String, rest: List<&2, String>, mi: Bool, +mode: String) -> IO(Unit):
+def run_transpile_i(+head: String, rest: List<&2, String>, mi: Bool, +mode: String, +sm: String, +factory: String, +fragment: String, +isrc: String) -> IO(Unit):
   match mi:
     case True{}:
-      run_transpile_args(rest, False{}, True{}, mode)
+      run_transpile_args(rest, False{}, True{}, mode, sm, factory, fragment, isrc)
     case False{}:
-      run_transpile_args(Con{head, rest}, False{}, False{}, mode)
+      run_transpile_args(Con{head, rest}, False{}, False{}, mode, sm, factory, fragment, isrc)
 
-def run_transpile_h(+head: String, rest: List<&2, String>, mw: Bool, +mode: String) -> IO(Unit):
+def run_transpile_h(+head: String, rest: List<&2, String>, mw: Bool, +mode: String, +sm: String, +factory: String, +fragment: String, +isrc: String) -> IO(Unit):
   match mw:
     case True{}:
-      run_transpile_args(rest, True{}, False{}, mode)
+      run_transpile_args(rest, True{}, False{}, mode, sm, factory, fragment, isrc)
     case False{}:
-      run_transpile_i(head, rest, String.eq(head, "--minify-identifiers"), mode)
+      run_transpile_i(head, rest, String.eq(head, "--minify-identifiers"), mode, sm, factory, fragment, isrc)
 
-def run_transpile_go(args: List<&2, String>, +mode: String) -> IO(Unit):
-  match args:
-    case Nil{}:
-      transpile_files(args, True{}, mode)
-    case Con{+head, rest}:
-      run_transpile_h(head, rest, String.eq(head, "--minify-whitespace"), mode)
+# sel: 0=go args; 1..5=flag kinds with head/rest; 10+=take which/val
+# which codes via string still compared in arms through precomputed bools
+@unsafe def run_transpile_k(sel: Nat, args: List<&2, String>, +mode: String, +sm: String, +factory: String, +fragment: String, +isrc: String, +head: String, rest: List<&2, String>, +which: String, +val: String, b0: Bool, b1: Bool, b2: Bool, b3: Bool, b4: Bool) -> IO(Unit):
+  match sel:
+    case 0n:
+      match args:
+        case Nil{}:
+          transpile_files(args, True{}, mode, sm, factory, fragment, isrc)
+        case Con{+h, r}:
+          run_transpile_k(1n, Nil{}, mode, sm, factory, fragment, isrc, h, r, "", "", String.eq(h, "--sourcemap"), String.eq(h, "--jsx-runtime"), String.eq(h, "--jsx-factory"), String.eq(h, "--jsx-fragment"), String.eq(h, "--jsx-import-source"))
+    case 1n:
+      match b0:
+        case True{}:
+          run_transpile_k(10n, Nil{}, mode, sm, factory, fragment, isrc, head, rest, "sourcemap", "", False{}, False{}, False{}, False{}, False{})
+        case False{}:
+          run_transpile_k(2n, Nil{}, mode, sm, factory, fragment, isrc, head, rest, "", "", b1, b2, b3, b4, False{})
+    case 2n:
+      match b0:
+        case True{}:
+          run_transpile_k(10n, Nil{}, mode, sm, factory, fragment, isrc, head, rest, "jsx-runtime", "", False{}, False{}, False{}, False{}, False{})
+        case False{}:
+          run_transpile_k(3n, Nil{}, mode, sm, factory, fragment, isrc, head, rest, "", "", b1, b2, b3, False{}, False{})
+    case 3n:
+      match b0:
+        case True{}:
+          run_transpile_k(10n, Nil{}, mode, sm, factory, fragment, isrc, head, rest, "jsx-factory", "", False{}, False{}, False{}, False{}, False{})
+        case False{}:
+          run_transpile_k(4n, Nil{}, mode, sm, factory, fragment, isrc, head, rest, "", "", b1, b2, False{}, False{}, False{})
+    case 4n:
+      match b0:
+        case True{}:
+          run_transpile_k(10n, Nil{}, mode, sm, factory, fragment, isrc, head, rest, "jsx-fragment", "", False{}, False{}, False{}, False{}, False{})
+        case False{}:
+          run_transpile_k(5n, Nil{}, mode, sm, factory, fragment, isrc, head, rest, "", "", b1, False{}, False{}, False{}, False{})
+    case 5n:
+      match b0:
+        case True{}:
+          run_transpile_k(10n, Nil{}, mode, sm, factory, fragment, isrc, head, rest, "jsx-import-source", "", False{}, False{}, False{}, False{}, False{})
+        case False{}:
+          run_transpile_h(head, rest, String.eq(head, "--minify-whitespace"), mode, sm, factory, fragment, isrc)
+    case 10n:
+      match rest:
+        case Con{+v, tail}:
+          run_transpile_k(11n, Nil{}, mode, sm, factory, fragment, isrc, head, tail, which, v, String.eq(which, "sourcemap"), String.eq(which, "jsx-runtime"), String.eq(which, "jsx-factory"), String.eq(which, "jsx-fragment"), jsx_mode_ok(v))
+        case Nil{}:
+          run_transpile_k(20n, Nil{}, mode, sm, factory, fragment, isrc, head, Nil{}, which, "", String.eq(which, "sourcemap"), String.eq(which, "jsx-runtime"), String.eq(which, "jsx-factory"), String.eq(which, "jsx-fragment"), False{})
+    case 11n:
+      match b0:
+        case True{}:
+          run_transpile_k(0n, rest, mode, val, factory, fragment, isrc, "", Nil{}, "", "", False{}, False{}, False{}, False{}, False{})
+        case False{}:
+          run_transpile_k(12n, Nil{}, mode, sm, factory, fragment, isrc, head, rest, which, val, b1, b2, b3, b4, False{})
+    case 12n:
+      match b0:
+        case True{}:
+          match b3:
+            case True{}:
+              run_transpile_k(0n, rest, val, sm, factory, fragment, isrc, "", Nil{}, "", "", False{}, False{}, False{}, False{}, False{})
+            case False{}:
+              IO.die(Unit, 2, "knot: --jsx-runtime requires classic|automatic|preserve (missing_input)")
+        case False{}:
+          run_transpile_k(13n, Nil{}, mode, sm, factory, fragment, isrc, head, rest, which, val, b1, b2, False{}, False{}, False{})
+    case 13n:
+      match b0:
+        case True{}:
+          run_transpile_k(0n, rest, mode, sm, val, fragment, isrc, "", Nil{}, "", "", False{}, False{}, False{}, False{}, False{})
+        case False{}:
+          run_transpile_k(14n, Nil{}, mode, sm, factory, fragment, isrc, head, rest, which, val, b1, False{}, False{}, False{}, False{})
+    case 14n:
+      match b0:
+        case True{}:
+          run_transpile_k(0n, rest, mode, sm, factory, val, isrc, "", Nil{}, "", "", False{}, False{}, False{}, False{}, False{})
+        case False{}:
+          run_transpile_k(0n, rest, mode, sm, factory, fragment, val, "", Nil{}, "", "", False{}, False{}, False{}, False{}, False{})
+    case _:
+      match b0:
+        case True{}:
+          IO.die(Unit, 2, "knot: --sourcemap requires linked|external|none (missing_input)")
+        case False{}:
+          match b1:
+            case True{}:
+              IO.die(Unit, 2, "knot: --jsx-runtime requires classic|automatic|preserve (missing_input)")
+            case False{}:
+              match b2:
+                case True{}:
+                  IO.die(Unit, 2, "knot: --jsx-factory requires a name (missing_input)")
+                case False{}:
+                  match b3:
+                    case True{}:
+                      IO.die(Unit, 2, "knot: --jsx-fragment requires a name (missing_input)")
+                    case False{}:
+                      IO.die(Unit, 2, "knot: --jsx-import-source requires a package (missing_input)")
 
-def run_transpile_jsx_mode(rest: List<&2, String>) -> IO(Unit):
-  match rest:
-    case Con{+mode, tail}:
-      run_transpile_go(tail, mode)
-    case Nil{}:
-      IO.die(Unit, 2, "knot: --jsx-runtime requires classic|automatic (missing_input)")
-
-def run_transpile_jsx(+head: String, rest: List<&2, String>, is_jsx: Bool) -> IO(Unit):
-  match is_jsx:
-    case True{}:
-      run_transpile_jsx_mode(rest)
-    case False{}:
-      run_transpile_h(head, rest, String.eq(head, "--minify-whitespace"), "classic")
+def run_transpile_go(args: List<&2, String>, +mode: String, +sm: String, +factory: String, +fragment: String, +isrc: String) -> IO(Unit):
+  run_transpile_k(0n, args, mode, sm, factory, fragment, isrc, "", Nil{}, "", "", False{}, False{}, False{}, False{}, False{})
 
 def run_transpile(args: List<&2, String>) -> IO(Unit):
-  match args:
-    case Nil{}:
-      transpile_files(args, True{}, "classic")
-    case Con{+head, rest}:
-      run_transpile_jsx(head, rest, String.eq(head, "--jsx-runtime"))
-
+  run_transpile_go(args, "classic", "linked", "React.createElement", "React.Fragment", "react")
 
 
 
@@ -2560,6 +2657,245 @@ def dispatch_transpile(+cmd: String, rest: List<&2, String>, is_transpile: Bool)
       run_transpile(rest)
     case False{}:
       dispatch_install(cmd, rest, String.eq(cmd, "install"))
+
+def analyze_none(first: Bool) -> IO(Unit):
+  match first:
+    case True{}:
+      IO.die(Unit, 2, "knot: analyze requires an entrypoint (missing_input)")
+    case False{}:
+      IO.pure(Unit, Unit{})
+
+def analyze_soft_tsx_ex(+tsx: String, ex2: Bool) -> IO(String):
+  match ex2:
+    case True{}:
+      IO.pure(String, tsx)
+    case False{}:
+      IO.pure(String, "")
+
+def analyze_soft_ts_ex(+path: String, +ts: String, ex: Bool) -> IO(String):
+  match ex:
+    case True{}:
+      IO.pure(String, ts)
+    case False{}:
+      do IO<String>:
+        +tsx : String = path ++ ".tsx"
+        ex2 : Bool <- file_exists(tsx)
+        analyze_soft_tsx_ex(tsx, ex2)
+
+def analyze_soft_ts(+path: String) -> IO(String):
+  do IO<String>:
+    +ts : String = path ++ ".ts"
+    ex : Bool <- file_exists(ts)
+    analyze_soft_ts_ex(path, ts, ex)
+
+def analyze_soft_file_ex(+path: String, ex: Bool) -> IO(String):
+  match ex:
+    case True{}:
+      IO.pure(String, path)
+    case False{}:
+      analyze_soft_ts(path)
+
+def analyze_soft_file(+path: String) -> IO(String):
+  do IO<String>:
+    ex : Bool <- file_exists(path)
+    analyze_soft_file_ex(path, ex)
+
+def analyze_soft_index_ts_ex(+ts: String, ex2: Bool) -> IO(String):
+  match ex2:
+    case True{}:
+      IO.pure(String, ts)
+    case False{}:
+      IO.pure(String, "")
+
+def analyze_soft_index_ex(+spec: String, +js: String, ex: Bool) -> IO(String):
+  match ex:
+    case True{}:
+      IO.pure(String, js)
+    case False{}:
+      do IO<String>:
+        +ts : String = Compiler.pkg_index_ts(spec)
+        ex2 : Bool <- file_exists(ts)
+        analyze_soft_index_ts_ex(ts, ex2)
+
+def analyze_soft_index(+spec: String) -> IO(String):
+  do IO<String>:
+    +js : String = Compiler.pkg_index_js(spec)
+    ex : Bool <- file_exists(js)
+    analyze_soft_index_ex(spec, js, ex)
+
+def analyze_soft_main(+spec: String, +main: String, empty: Bool) -> IO(String):
+  match empty:
+    case True{}:
+      analyze_soft_index(spec)
+    case False{}:
+      analyze_soft_file(Compiler.pkg_join(spec, main))
+
+def analyze_soft_pkg_ex(+spec: String, +pj: String, ex: Bool) -> IO(String):
+  match ex:
+    case False{}:
+      analyze_soft_index(spec)
+    case True{}:
+      do IO<String>:
+        +text : String <- read_text(pj)
+        +main : String <- json_optional_string(text, "main")
+        analyze_soft_main(spec, main, String.is_empty(main))
+
+def analyze_soft_pkg(+spec: String) -> IO(String):
+  do IO<String>:
+    +pj : String = Compiler.pkg_json(spec)
+    ex : Bool <- file_exists(pj)
+    analyze_soft_pkg_ex(spec, pj, ex)
+
+def analyze_resolve_rel(rel: Bool, +importer: String, +spec: String) -> IO(String):
+  match rel:
+    case True{}:
+      analyze_soft_file(Compiler.resolve_rel(importer, spec))
+    case False{}:
+      analyze_soft_pkg(spec)
+
+def analyze_resolve(+importer: String, +spec: String) -> IO(String):
+  analyze_resolve_rel(Compiler.is_rel(spec), importer, spec)
+
+def analyze_mod_json(+file: String, imports: List<&2, String>, exports: List<&2, String>) -> String:
+  "{\"file\":" ++ Compiler.json_str(file) ++ ",\"imports\":" ++ Compiler.json_list(imports) ++ ",\"exports\":" ++ Compiler.json_list(exports) ++ "}"
+
+def analyze_mods_go(xs: List<&2, String>) -> String:
+  match xs:
+    case Nil{}:
+      ""
+    case Con{h, Nil{}}:
+      h
+    case Con{h, t}:
+      h ++ "," ++ analyze_mods_go(t)
+
+def analyze_mods_json(xs: List<&2, String>) -> String:
+  match xs:
+    case Nil{}:
+      "[]"
+    case _:
+      "[" ++ analyze_mods_go(xs) ++ "]"
+
+def analyze_app(xs: List<&2, String>, x: String) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      Con{x, Nil{}}
+    case Con{h, t}:
+      Con{h, analyze_app(t, x)}
+
+@unsafe def analyze_has(sel: Nat, xs: List<&2, String>, +f: String, eq: Bool) -> Bool:
+  match sel:
+    case 0n:
+      match xs:
+        case Nil{}:
+          False{}
+        case Con{+h, t}:
+          analyze_has(1n, t, f, String.eq(h, f))
+    case _:
+      match eq:
+        case True{}:
+          True{}
+        case False{}:
+          analyze_has(0n, xs, f, False{})
+
+def analyze_miss_add(+miss: List<&2, String>, +spec: String, empty: Bool) -> List<&2, String>:
+  match empty:
+    case True{}:
+      analyze_app(miss, spec)
+    case False{}:
+      miss
+
+@unsafe def analyze_go(sel: Nat, +file: String, imps: List<&2, String>, +visited: List<&2, String>, +mods: List<&2, String>, +miss: List<&2, String>, seen: Bool, empty: Bool, +spec: String, +path: String, st: List<&2, String> & List<&2, String> & List<&2, String>) -> IO(List<&2, String> & List<&2, String> & List<&2, String>):
+  match sel:
+    case 0n:
+      match seen:
+        case True{}:
+          IO.pure(List<&2, String> & List<&2, String> & List<&2, String>, (visited, mods, miss))
+        case False{}:
+          do IO<List<&2, String> & List<&2, String> & List<&2, String>>:
+            +src : String <- read_text(file)
+            +imps2 : List<&2, String> = Compiler.imports_of(src)
+            +exps : List<&2, String> = Compiler.exports_of(src)
+            +mod : String = analyze_mod_json(file, imps2, exps)
+            analyze_go(1n, file, imps2, analyze_app(visited, file), analyze_app(mods, mod), miss, False{}, False{}, "", "", (Nil{}, Nil{}, Nil{}))
+    case 1n:
+      match imps:
+        case Nil{}:
+          IO.pure(List<&2, String> & List<&2, String> & List<&2, String>, (visited, mods, miss))
+        case Con{+sp, rest}:
+          do IO<List<&2, String> & List<&2, String> & List<&2, String>>:
+            +p2 : String <- analyze_resolve(file, sp)
+            analyze_go(2n, file, rest, visited, mods, miss, False{}, String.is_empty(p2), sp, p2, (Nil{}, Nil{}, Nil{}))
+    case 2n:
+      match empty:
+        case True{}:
+          analyze_go(1n, file, imps, visited, mods, analyze_miss_add(miss, spec, True{}), False{}, False{}, "", "", (Nil{}, Nil{}, Nil{}))
+        case False{}:
+          do IO<List<&2, String> & List<&2, String> & List<&2, String>>:
+            st2 : List<&2, String> & List<&2, String> & List<&2, String> <- analyze_go(0n, path, Nil{}, visited, mods, miss, analyze_has(0n, visited, path, False{}), False{}, "", "", (Nil{}, Nil{}, Nil{}))
+            analyze_go(3n, file, imps, visited, mods, miss, False{}, False{}, "", "", st2)
+    case _:
+      (vis2, mods2, miss2) = st
+      analyze_go(1n, file, imps, vis2, mods2, miss2, False{}, False{}, "", "", (Nil{}, Nil{}, Nil{}))
+
+def analyze_entry_cont(+file: String, +entries: List<&2, String>, st: List<&2, String> & List<&2, String> & List<&2, String>) -> List<&2, String> & List<&2, String> & List<&2, String> & List<&2, String>:
+  (vis2, mods2, miss2) = st
+  (analyze_app(entries, file), vis2, mods2, miss2)
+
+def analyze_entry_ex(+file: String, ex: Bool, +visited: List<&2, String>, +mods: List<&2, String>, +miss: List<&2, String>, +entries: List<&2, String>) -> IO(List<&2, String> & List<&2, String> & List<&2, String> & List<&2, String>):
+  match ex:
+    case False{}:
+      IO.pure(List<&2, String> & List<&2, String> & List<&2, String> & List<&2, String>, (analyze_app(entries, file), visited, mods, analyze_app(miss, file)))
+    case True{}:
+      do IO<List<&2, String> & List<&2, String> & List<&2, String> & List<&2, String>>:
+        st : List<&2, String> & List<&2, String> & List<&2, String> <- analyze_go(0n, file, Nil{}, visited, mods, miss, analyze_has(0n, visited, file, False{}), False{}, "", "", (Nil{}, Nil{}, Nil{}))
+        return analyze_entry_cont(file, entries, st)
+
+def analyze_entry(+file: String, +visited: List<&2, String>, +mods: List<&2, String>, +miss: List<&2, String>, +entries: List<&2, String>) -> IO(List<&2, String> & List<&2, String> & List<&2, String> & List<&2, String>):
+  do IO<List<&2, String> & List<&2, String> & List<&2, String> & List<&2, String>>:
+    ex : Bool <- file_exists(file)
+    analyze_entry_ex(file, ex, visited, mods, miss, entries)
+
+@unsafe def analyze_entries_k(sel: Nat, args: List<&2, String>, +visited: List<&2, String>, +mods: List<&2, String>, +miss: List<&2, String>, +entries: List<&2, String>, rest: List<&2, String>, quad: List<&2, String> & List<&2, String> & List<&2, String> & List<&2, String>) -> IO(List<&2, String> & List<&2, String> & List<&2, String> & List<&2, String>):
+  match sel:
+    case 0n:
+      match args:
+        case Nil{}:
+          IO.pure(List<&2, String> & List<&2, String> & List<&2, String> & List<&2, String>, (entries, visited, mods, miss))
+        case Con{+file, r}:
+          do IO<List<&2, String> & List<&2, String> & List<&2, String> & List<&2, String>>:
+            q : List<&2, String> & List<&2, String> & List<&2, String> & List<&2, String> <- analyze_entry(file, visited, mods, miss, entries)
+            analyze_entries_k(1n, Nil{}, visited, mods, miss, entries, r, q)
+    case _:
+      (ents2, vis2, mods2, miss2) = quad
+      analyze_entries_k(0n, rest, vis2, mods2, miss2, ents2, Nil{}, (Nil{}, Nil{}, Nil{}, Nil{}))
+
+def analyze_entries(args: List<&2, String>, +visited: List<&2, String>, +mods: List<&2, String>, +miss: List<&2, String>, +entries: List<&2, String>) -> IO(List<&2, String> & List<&2, String> & List<&2, String> & List<&2, String>):
+  analyze_entries_k(0n, args, visited, mods, miss, entries, Nil{}, (Nil{}, Nil{}, Nil{}, Nil{}))
+
+
+
+def analyze_print(entries: List<&2, String>, mods: List<&2, String>, miss: List<&2, String>) -> IO(Unit):
+  IO.print("{\"entries\":" ++ Compiler.json_list(entries) ++ ",\"modules\":" ++ analyze_mods_json(mods) ++ ",\"missing\":" ++ Compiler.json_list(miss) ++ "}")
+
+def run_analyze_print(quad: List<&2, String> & List<&2, String> & List<&2, String> & List<&2, String>) -> IO(Unit):
+  (entries, visited, mods, miss) = quad
+  analyze_print(entries, mods, miss)
+
+def run_analyze(args: List<&2, String>) -> IO(Unit):
+  match args:
+    case Nil{}:
+      analyze_none(True{})
+    case _:
+      do IO<Unit>:
+        quad : List<&2, String> & List<&2, String> & List<&2, String> & List<&2, String> <- analyze_entries(args, Nil{}, Nil{}, Nil{}, Nil{})
+        run_analyze_print(quad)
+
+def dispatch_analyze(+cmd: String, rest: List<&2, String>, is_analyze: Bool) -> IO(Unit):
+  match is_analyze:
+    case True{}:
+      run_analyze(rest)
+    case False{}:
+      dispatch_transpile(cmd, rest, String.eq(cmd, "transpile"))
 
 def scan_none(first: Bool) -> IO(Unit):
   match first:
@@ -2597,7 +2933,7 @@ def dispatch_scan(+cmd: String, rest: List<&2, String>, is_scan: Bool) -> IO(Uni
     case True{}:
       run_scan(rest)
     case False{}:
-      dispatch_transpile(cmd, rest, String.eq(cmd, "transpile"))
+      dispatch_analyze(cmd, rest, String.eq(cmd, "analyze"))
 
 
 
@@ -3018,7 +3354,7 @@ def emit_dyn_one(+importer: String, +outdir: String, +spec: String) -> IO(String
     js : String <- bundle_js(path, Compiler.transpile(path, src))
     +got : String <- IO.try(String, Hash.sha512_b64(path))
     +name : String = take_hash(0n, got, 8n, "", 'a', False{}) ++ ".js"
-    u : Unit <- transpile_ok_to(Compiler.join_rel(outdir, name), js, Compiler.make_map(path))
+    u : Unit <- transpile_ok_to(Compiler.join_rel(outdir, name), js, Compiler.make_map(path, Nil{}), "linked")
     return name
 
 def emit_dyn_go(+importer: String, +out: String, +spec: String) -> IO(Unit):
@@ -3042,7 +3378,7 @@ def emit_req_one(+importer: String, +outdir: String, +spec: String) -> IO(Unit):
     +path : String <- resolve_open(importer, spec)
     src : String <- read_text(path)
     js : String <- bundle_js(path, Compiler.transpile(path, src))
-    transpile_ok_to(Compiler.join_rel(outdir, Compiler.basename(Compiler.js_path(path))), js, Compiler.make_map(path))
+    transpile_ok_to(Compiler.join_rel(outdir, Compiler.basename(Compiler.js_path(path))), js, Compiler.make_map(path, Nil{}), "linked")
 
 def emit_req(+importer: String, +out: String, specs: List<&2, String>) -> IO(Unit):
   match specs:
@@ -3061,7 +3397,7 @@ def bundle_write_dyn(+file: String, +out: String, +src: String) -> IO(Unit):
 def bundle_write(+file: String, +out: String) -> IO(Unit):
   do IO<Unit>:
     js : String <- bundle_entry(file)
-    u0 : Unit <- transpile_ok_to(out, js, Compiler.make_map(file))
+    u0 : Unit <- transpile_ok_to(out, js, Compiler.make_map(file, Nil{}), "linked")
     +src : String <- read_text(file)
     bundle_write_dyn(file, out, src)
 
@@ -3103,14 +3439,14 @@ def run_build_nb(no_bundle: Bool, +head: String, rest: List<&2, String>) -> IO(U
           watch_loop(0n, file, last, src, False{})
         case False{}:
           do IO<Unit>:
-            u : Unit <- transpile_one(file, "classic")
+            u : Unit <- transpile_one(file, "classic", "linked", "React.createElement", "React.Fragment", "react")
             watch_loop(0n, file, src, src, False{})
 
 def watch_transpile(args: List<&2, String>) -> IO(Unit):
   match args:
     case Con{+file, _}:
       do IO<Unit>:
-        u : Unit <- transpile_one(file, "classic")
+        u : Unit <- transpile_one(file, "classic", "linked", "React.createElement", "React.Fragment", "react")
         +src : String <- read_text(file)
         watch_loop(0n, file, src, src, False{})
     case Nil{}:
@@ -3230,7 +3566,7 @@ def dispatch_clean(+cmd: String, rest: List<&2, String>, is_clean: Bool) -> IO(U
 
 
 def run_help() -> IO(Unit):
-  IO.print("Usage: knot <command>\n\nCommands:\n  install      Install dependencies from package.json\n  add          Add a dependency and install\n  remove       Remove a dependency\n  update       Re-resolve dependency ranges\n  list         Print direct dependencies\n  why          Show why a package is installed\n  fetch        Fill the store from the lockfile\n  store        Inspect the content-addressed store\n  cache clean  Remove the registry metadata cache\n  transpile    Transform TypeScript or JavaScript without bundling\n  scan         Print runtime imports and exports as JSON\n  build        Compile entry points; --no-bundle skips graph linking\n  clean        Remove compiler caches with --build-cache")
+  IO.print("Usage: knot <command>\n\nCommands:\n  install      Install dependencies from package.json\n  add          Add a dependency and install\n  remove       Remove a dependency\n  update       Re-resolve dependency ranges\n  list         Print direct dependencies\n  why          Show why a package is installed\n  fetch        Fill the store from the lockfile\n  store        Inspect the content-addressed store\n  cache clean  Remove the registry metadata cache\n  transpile    Transform TypeScript or JavaScript without bundling\n  scan         Print runtime imports and exports as JSON\n  analyze      Walk import graph from entrypoints as JSON\n  build        Compile entry points; --no-bundle skips graph linking\n  clean        Remove compiler caches with --build-cache")
 
 def dispatch_version(+cmd: String, rest: List<&2, String>, is_version: Bool) -> IO(Unit):
   match is_version:

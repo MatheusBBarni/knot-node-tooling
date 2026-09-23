@@ -7,7 +7,15 @@
 // Jsx
 // ===
 
-static int jsx_lower(const char* source, const char* mode, char* out, size_t out_n) {
+static int jsx_lower(
+  const char* source,
+  const char* mode,
+  const char* factory,
+  const char* fragment,
+  const char* import_source,
+  char* out,
+  size_t out_n
+) {
   const char* root = getenv("KNOT_ROOT");
   if (root == NULL || root[0] == 0) {
     errno = EINVAL;
@@ -24,13 +32,21 @@ static int jsx_lower(const char* source, const char* mode, char* out, size_t out
   }
   close(fd);
 
-  char cmd[4096];
+  const char* m = (mode && mode[0]) ? mode : "classic";
+  const char* f = (factory && factory[0]) ? factory : "React.createElement";
+  const char* g = (fragment && fragment[0]) ? fragment : "React.Fragment";
+  const char* s = (import_source && import_source[0]) ? import_source : "react";
+
+  char cmd[8192];
   snprintf(
     cmd,
     sizeof(cmd),
-    "node \"%s/scripts/jsx-lower.mjs\" %s < \"%s\"",
+    "node \"%s/scripts/jsx-lower.mjs\" '%s' '%s' '%s' '%s' < \"%s\"",
     root,
-    (strcmp(mode, "automatic") == 0) ? "automatic" : "classic",
+    m,
+    f,
+    g,
+    s,
     inpath
   );
   FILE* p = popen(cmd, "r");
@@ -52,12 +68,15 @@ static int jsx_lower(const char* source, const char* mode, char* out, size_t out
 typedef struct {
   char* text;
   char* mode;
+  char* factory;
+  char* fragment;
+  char* import_source;
   char* out;
 } JsxLower;
 
 static void jsx_lower_call(IoWork* w) {
   JsxLower* g = (JsxLower*)w->data;
-  io_sys_end(w, jsx_lower(g->text, g->mode, g->out, 1 << 20));
+  io_sys_end(w, jsx_lower(g->text, g->mode, g->factory, g->fragment, g->import_source, g->out, 1 << 20));
 }
 
 static Term jsx_lower_pack(Env e, IoWork* w) {
@@ -66,6 +85,9 @@ static Term jsx_lower_pack(Env e, IoWork* w) {
     : io_done(e, io_str(e, g->out, strlen(g->out)));
   free(g->text);
   free(g->mode);
+  free(g->factory);
+  free(g->fragment);
+  free(g->import_source);
   free(g->out);
   free(g);
   return r;
@@ -74,13 +96,20 @@ static Term jsx_lower_pack(Env e, IoWork* w) {
 Term jsx_lower_run(Env e, Term* f, IoWork* w) {
   uint64_t n1 = 0;
   uint64_t n2 = 0;
+  uint64_t n3 = 0;
+  uint64_t n4 = 0;
+  uint64_t n5 = 0;
   JsxLower* g = io_mem(malloc(sizeof(JsxLower)));
   g->text = io_cstr(e, f[0], &n1);
   g->mode = io_cstr(e, f[1], &n2);
+  g->factory = io_cstr(e, f[2], &n3);
+  g->fragment = io_cstr(e, f[3], &n4);
+  g->import_source = io_cstr(e, f[4], &n5);
   g->out = io_mem(malloc(1 << 20));
   g->out[0] = 0;
   w->data = (char*)g;
-  if (io_nul(g->text, n1) || io_nul(g->mode, n2)) {
+  if (io_nul(g->text, n1) || io_nul(g->mode, n2) || io_nul(g->factory, n3)
+      || io_nul(g->fragment, n4) || io_nul(g->import_source, n5)) {
     w->code = EINVAL;
     return jsx_lower_pack(e, w);
   }

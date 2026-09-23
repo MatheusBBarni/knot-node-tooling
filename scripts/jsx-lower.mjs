@@ -1,53 +1,95 @@
 import fs from "node:fs";
 
-const modeArg = process.argv[2] === "automatic" ? "automatic" : "classic";
-const source = fs.readFileSync(0, "utf8");
-process.stdout.write(lower(source, modeArg === "automatic"));
+class JsxLower {
+  static defaults() {
+    return {
+      mode: "classic",
+      factory: "React.createElement",
+      fragment: "React.Fragment",
+      importSource: "react",
+    };
+  }
 
-function lower(src, automatic) {
-  let i = 0;
-  const n = src.length;
-  let out = "";
-  let usedJsx = false;
-  let usedJsxs = false;
-  let usedFrag = false;
+  static parseArgs(argv) {
+    const d = JsxLower.defaults();
+    const mode = argv[2] === "automatic" || argv[2] === "classic" || argv[2] === "preserve"
+      ? argv[2]
+      : d.mode;
+    return {
+      mode,
+      factory: argv[3] && argv[3].length > 0 ? argv[3] : d.factory,
+      fragment: argv[4] && argv[4].length > 0 ? argv[4] : d.fragment,
+      importSource: argv[5] && argv[5].length > 0 ? argv[5] : d.importSource,
+    };
+  }
 
-  const peek = () => (i < n ? src[i] : "");
-  const next = () => (i < n ? src[i++] : "");
-  const startsIdent = (c) => /[A-Za-z_$]/.test(c);
-  const isIdent = (c) => /[A-Za-z0-9_$]/.test(c);
-  const skipSpace = () => {
-    while (i < n && /\s/.test(src[i])) i++;
-  };
+  static lower(src, opts) {
+    if (opts.mode === "preserve") return src;
+    return new JsxLower(src, opts).run();
+  }
 
-  function readIdent() {
+  constructor(src, opts) {
+    this.src = src;
+    this.i = 0;
+    this.n = src.length;
+    this.out = "";
+    this.automatic = opts.mode === "automatic";
+    this.factory = opts.factory;
+    this.fragment = opts.fragment;
+    this.importSource = opts.importSource;
+    this.usedJsx = false;
+    this.usedJsxs = false;
+    this.usedFrag = false;
+  }
+
+  peek() {
+    return this.i < this.n ? this.src[this.i] : "";
+  }
+
+  next() {
+    return this.i < this.n ? this.src[this.i++] : "";
+  }
+
+  startsIdent(c) {
+    return /[A-Za-z_$]/.test(c);
+  }
+
+  isIdent(c) {
+    return /[A-Za-z0-9_$]/.test(c);
+  }
+
+  skipSpace() {
+    while (this.i < this.n && /\s/.test(this.src[this.i])) this.i++;
+  }
+
+  readIdent() {
     let s = "";
-    while (i < n && isIdent(src[i])) s += src[i++];
+    while (this.i < this.n && this.isIdent(this.src[this.i])) s += this.src[this.i++];
     return s;
   }
 
-  function readStringRest(q) {
+  readStringRest(q) {
     let s = "";
-    while (i < n) {
-      const c = next();
+    while (this.i < this.n) {
+      const c = this.next();
       s += c;
-      if (c === "\\" && i < n) s += next();
+      if (c === "\\" && this.i < this.n) s += this.next();
       else if (c === q) break;
     }
     return s;
   }
 
-  function readBraceExpr() {
+  readBraceExpr() {
     let depth = 1;
     let s = "";
-    while (i < n && depth > 0) {
-      const c = next();
+    while (this.i < this.n && depth > 0) {
+      const c = this.next();
       if (c === "{") depth++;
       else if (c === "}") {
         depth--;
         if (depth === 0) break;
       } else if (c === "'" || c === '"' || c === "`") {
-        s += c + readStringRest(c);
+        s += c + this.readStringRest(c);
         continue;
       }
       if (depth > 0) s += c;
@@ -55,26 +97,26 @@ function lower(src, automatic) {
     return s.trim();
   }
 
-  function isJsxStart() {
-    const rest = src.slice(i + 1);
+  isJsxStart() {
+    const rest = this.src.slice(this.i + 1);
     if (!/^\s*(\/|[A-Za-z_$]|>)/.test(rest)) return false;
-    let j = out.length - 1;
-    while (j >= 0 && /\s/.test(out[j])) j--;
-    const before = out.slice(0, j + 1).trimEnd();
+    let j = this.out.length - 1;
+    while (j >= 0 && /\s/.test(this.out[j])) j--;
+    const before = this.out.slice(0, j + 1).trimEnd();
     if (/\b(return|throw|case|default|else|do|typeof|await|yield)$/.test(before)) return true;
-    const prev = j >= 0 ? out[j] : "";
+    const prev = j >= 0 ? this.out[j] : "";
     if (/[(\[{=,?:;]/.test(prev)) return true;
     if (/[A-Za-z0-9_)$]/.test(prev)) return false;
     return true;
   }
 
-  function tagExpr(name) {
-    if (name === "") return automatic ? "Fragment" : "React.Fragment";
+  tagExpr(name) {
+    if (name === "") return this.automatic ? "Fragment" : this.fragment;
     if (/^[A-Z]/.test(name)) return name;
     return JSON.stringify(name);
   }
 
-  function propsObject(props, kids) {
+  propsObject(props, kids) {
     const parts = props.slice();
     if (kids.length === 1) parts.push(`children: ${kids[0]}`);
     else if (kids.length > 1) parts.push(`children: [${kids.join(", ")}]`);
@@ -82,42 +124,42 @@ function lower(src, automatic) {
     return `{ ${parts.join(", ")} }`;
   }
 
-  function emit(tag, props, kids) {
-    if (automatic) {
-      if (tag === "Fragment") usedFrag = true;
-      const propObj = propsObject(props, kids);
+  emit(tag, props, kids) {
+    if (this.automatic) {
+      if (tag === "Fragment") this.usedFrag = true;
+      const propObj = this.propsObject(props, kids);
       if (kids.length <= 1) {
-        usedJsx = true;
+        this.usedJsx = true;
         return `jsx(${tag}, ${propObj})`;
       }
-      usedJsxs = true;
+      this.usedJsxs = true;
       return `jsxs(${tag}, ${propObj})`;
     }
     const p = props.length === 0 ? "null" : `{ ${props.join(", ")} }`;
-    if (kids.length === 0) return `React.createElement(${tag}, ${p})`;
-    return `React.createElement(${tag}, ${p}, ${kids.join(", ")})`;
+    if (kids.length === 0) return `${this.factory}(${tag}, ${p})`;
+    return `${this.factory}(${tag}, ${p}, ${kids.join(", ")})`;
   }
 
-  function parseAttrs() {
+  parseAttrs() {
     const props = [];
     while (true) {
-      skipSpace();
-      if (peek() === ">" || peek() === "/" || peek() === "") break;
-      if (!startsIdent(peek())) break;
-      const key = readIdent();
-      skipSpace();
-      if (peek() === "=") {
-        next();
-        skipSpace();
+      this.skipSpace();
+      if (this.peek() === ">" || this.peek() === "/" || this.peek() === "") break;
+      if (!this.startsIdent(this.peek())) break;
+      const key = this.readIdent();
+      this.skipSpace();
+      if (this.peek() === "=") {
+        this.next();
+        this.skipSpace();
         let val;
-        if (peek() === "{") {
-          next();
-          val = readBraceExpr();
-        } else if (peek() === '"' || peek() === "'") {
-          const q = next();
-          val = q + readStringRest(q);
+        if (this.peek() === "{") {
+          this.next();
+          val = this.readBraceExpr();
+        } else if (this.peek() === '"' || this.peek() === "'") {
+          const q = this.next();
+          val = q + this.readStringRest(q);
         } else {
-          val = readIdent();
+          val = this.readIdent();
         }
         props.push(`${key}: ${val}`);
       } else {
@@ -127,95 +169,104 @@ function lower(src, automatic) {
     return props;
   }
 
-  function parseKids(closeName) {
+  parseKids(closeName) {
     const kids = [];
-    while (i < n) {
-      if (peek() === "<") {
-        const save = i;
-        next();
-        skipSpace();
-        if (peek() === "/") {
-          next();
-          skipSpace();
-          const name = startsIdent(peek()) ? readIdent() : "";
-          skipSpace();
-          if (peek() === ">") next();
+    while (this.i < this.n) {
+      if (this.peek() === "<") {
+        const save = this.i;
+        this.next();
+        this.skipSpace();
+        if (this.peek() === "/") {
+          this.next();
+          this.skipSpace();
+          const name = this.startsIdent(this.peek()) ? this.readIdent() : "";
+          this.skipSpace();
+          if (this.peek() === ">") this.next();
           if (name === closeName || (closeName === "" && name === "")) return kids;
-          i = save;
-          kids.push(JSON.stringify(next()));
+          this.i = save;
+          kids.push(JSON.stringify(this.next()));
           continue;
         }
-        i = save;
-        kids.push(parseElement());
+        this.i = save;
+        kids.push(this.parseElement());
         continue;
       }
-      if (peek() === "{") {
-        next();
-        kids.push(readBraceExpr());
+      if (this.peek() === "{") {
+        this.next();
+        kids.push(this.readBraceExpr());
         continue;
       }
       let text = "";
-      while (i < n && peek() !== "<" && peek() !== "{") text += next();
+      while (this.i < this.n && this.peek() !== "<" && this.peek() !== "{") text += this.next();
       const trimmed = text.replace(/^\s+|\s+$/g, " ").trim();
       if (trimmed.length > 0) kids.push(JSON.stringify(trimmed));
     }
     return kids;
   }
 
-  function parseElement() {
-    next(); // <
-    skipSpace();
-    if (peek() === ">") {
-      next();
-      if (automatic) usedFrag = true;
-      return emit(tagExpr(""), [], parseKids(""));
+  parseElement() {
+    this.next();
+    this.skipSpace();
+    if (this.peek() === ">") {
+      this.next();
+      if (this.automatic) this.usedFrag = true;
+      return this.emit(this.tagExpr(""), [], this.parseKids(""));
     }
-    const name = readIdent();
-    const props = parseAttrs();
-    skipSpace();
-    if (peek() === "/") {
-      next();
-      skipSpace();
-      if (peek() === ">") next();
-      return emit(tagExpr(name), props, []);
+    const name = this.readIdent();
+    const props = this.parseAttrs();
+    this.skipSpace();
+    if (this.peek() === "/") {
+      this.next();
+      this.skipSpace();
+      if (this.peek() === ">") this.next();
+      return this.emit(this.tagExpr(name), props, []);
     }
-    if (peek() === ">") next();
-    return emit(tagExpr(name), props, parseKids(name));
+    if (this.peek() === ">") this.next();
+    return this.emit(this.tagExpr(name), props, this.parseKids(name));
   }
 
-  while (i < n) {
-    const c = peek();
-    if (c === "<" && isJsxStart()) {
-      out += parseElement();
-      continue;
-    }
-    if (c === "'" || c === '"' || c === "`") {
-      out += next() + readStringRest(c);
-      continue;
-    }
-    if (c === "/" && src[i + 1] === "/") {
-      while (i < n && peek() !== "\n") out += next();
-      continue;
-    }
-    if (c === "/" && src[i + 1] === "*") {
-      out += next();
-      out += next();
-      while (i < n && !(peek() === "*" && src[i + 1] === "/")) out += next();
-      if (i < n) {
-        out += next();
-        out += next();
+  run() {
+    while (this.i < this.n) {
+      const c = this.peek();
+      if (c === "<" && this.isJsxStart()) {
+        this.out += this.parseElement();
+        continue;
       }
-      continue;
+      if (c === "'" || c === '"' || c === "`") {
+        this.out += this.next() + this.readStringRest(c);
+        continue;
+      }
+      if (c === "/" && this.src[this.i + 1] === "/") {
+        while (this.i < this.n && this.peek() !== "\n") this.out += this.next();
+        continue;
+      }
+      if (c === "/" && this.src[this.i + 1] === "*") {
+        this.out += this.next();
+        this.out += this.next();
+        while (this.i < this.n && !(this.peek() === "*" && this.src[this.i + 1] === "/")) {
+          this.out += this.next();
+        }
+        if (this.i < this.n) {
+          this.out += this.next();
+          this.out += this.next();
+        }
+        continue;
+      }
+      this.out += this.next();
     }
-    out += next();
-  }
 
-  if (automatic && (usedJsx || usedJsxs || usedFrag)) {
-    const names = [];
-    if (usedJsx) names.push("jsx");
-    if (usedJsxs) names.push("jsxs");
-    if (usedFrag) names.push("Fragment");
-    out = `import { ${names.join(", ")} } from "react/jsx-runtime";\n` + out;
+    if (this.automatic && (this.usedJsx || this.usedJsxs || this.usedFrag)) {
+      const names = [];
+      if (this.usedJsx) names.push("jsx");
+      if (this.usedJsxs) names.push("jsxs");
+      if (this.usedFrag) names.push("Fragment");
+      const spec = `${this.importSource}/jsx-runtime`;
+      this.out = `import { ${names.join(", ")} } from ${JSON.stringify(spec)};\n` + this.out;
+    }
+    return this.out;
   }
-  return out;
 }
+
+const opts = JsxLower.parseArgs(process.argv);
+const source = fs.readFileSync(0, "utf8");
+process.stdout.write(JsxLower.lower(source, opts));
