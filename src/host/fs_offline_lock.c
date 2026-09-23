@@ -3,11 +3,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/clonefile.h>
 #include <sys/stat.h>
 
-int layout_parent(char* path);
 int layout_pkg(const char* dest, const char* name);
+int knot_materialize_dir(const char* src, const char* dst);
 
 static void offline_sri_key(const char* s, char* out, size_t cap) {
   size_t n = 0;
@@ -22,20 +21,8 @@ static int offline_exists(const char* path) {
   return access(path, F_OK) == 0;
 }
 
-static int offline_clone(const char* src, const char* dst) {
-  char buf[4096];
-  if (strlen(dst) >= sizeof(buf)) {
-    errno = ENAMETOOLONG;
-    return -1;
-  }
-  memcpy(buf, dst, strlen(dst) + 1);
-  if (layout_parent(buf) != 0) {
-    return -1;
-  }
-  if (clonefile(src, dst, 0) != 0 && errno != EEXIST) {
-    return -1;
-  }
-  return 0;
+static int offline_silent(void) {
+  return access(".knot/silent", F_OK) == 0;
 }
 
 static int offline_one(
@@ -63,7 +50,9 @@ static int offline_one(
   if (offline_exists(dest_pkg)) {
     return 0;
   }
-  fprintf(stderr, "+ %s@%s\n", name, ver);
+  if (!offline_silent()) {
+    fprintf(stderr, "+ %s@%s\n", name, ver);
+  }
   offline_sri_key(integrity, key, sizeof(key));
   if (snprintf(unp, sizeof(unp), "%s/.knot/unpacked/%s", home, key) >= (int)sizeof(unp)) {
     errno = ENAMETOOLONG;
@@ -77,7 +66,7 @@ static int offline_one(
     errno = ENOENT;
     return -1;
   }
-  if (offline_clone(unp, dest) != 0) {
+  if (knot_materialize_dir(unp, dest) != 0) {
     return -1;
   }
   return layout_pkg(dest, name);
