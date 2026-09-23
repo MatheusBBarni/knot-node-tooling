@@ -1272,7 +1272,7 @@ def offline_one_have(has: Bool, +name: String, +dest: String, +integrity: String
       IO.pure(Unit, Unit{})
     case False{}:
       do IO<Unit>:
-        u_log : Unit <- IO.print_err("+ " ++ name ++ "@" ++ ver)
+        u_log : Unit <- progress("+ " ++ name ++ "@" ++ ver)
         +unp : String <- unpacked_path(integrity)
         has_unp : Bool <- file_exists(unp ++ "/package.json")
         offline_unp(has_unp, name, dest, integrity, tarball, unp)
@@ -1675,7 +1675,10 @@ def note_backend_ok(ok: Bool, +mode: String) -> IO(Unit):
       IO.die(Unit, 2, "knot: unknown backend " ++ mode ++ " (unknown_backend)")
 
 def note_backend(+mode: String) -> IO(Unit):
-  note_backend_ok(Bool.or(String.eq(mode, "copy"), Bool.or(String.eq(mode, "auto"), Bool.or(String.eq(mode, "hardlink"), String.eq(mode, "clone")))), mode)
+  do IO<Unit>:
+    u0 : Unit <- note_backend_ok(Bool.or(String.eq(mode, "copy"), Bool.or(String.eq(mode, "auto"), Bool.or(String.eq(mode, "hardlink"), String.eq(mode, "clone")))), mode)
+    u1 : Unit <- IO.try(Unit, Fs.mkdir_p(".knot"))
+    write_text(".knot/backend", mode)
 
 def parse_install_finish(registry: Maybe<&2, String>, offline: Bool, frozen: Bool) ->
   IO(String & Bool & Bool):
@@ -1850,6 +1853,7 @@ def parse_install_args(+args: List<&2, String>) -> IO(String & Bool & Bool):
     u : Unit <- note_silent(False{})
     u2 : Unit <- IO.try(Unit, Fs.unlink(".knot/filter"))
     u3 : Unit <- IO.try(Unit, Fs.unlink(".knot/reporter"))
+    u4 : Unit <- IO.try(Unit, Fs.unlink(".knot/backend"))
     parse_install(Nat.add(16n, Nat.mul(8n, List.length(&2, String, args))), 0n, args, None{}, False{}, False{}, False{}, False{}, False{}, "", False{})
 
 
