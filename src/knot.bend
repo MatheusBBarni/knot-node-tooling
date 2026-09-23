@@ -2,6 +2,8 @@ import Base
 import ./sri.bend as Sri
 import ./http.bend as Fetch
 import ./semver.bend as Semver
+import ./compiler.bend as Compiler
+
 
 def Fs.mkdir_p(path: String) -> IO(Result<&1, &1, U32 & String, Unit>):
   import "./host/fs_mkdir_p.c"
@@ -2354,15 +2356,818 @@ def dispatch_install(+cmd: String, rest: List<&2, String>, is_install: Bool) -> 
     case False{}:
       dispatch_fetch(cmd, rest, String.eq(cmd, "fetch"))
 
+def transpile_none(first: Bool) -> IO(Unit):
+  match first:
+    case True{}:
+      IO.die(Unit, 2, "knot: transpile requires a file (missing_input)")
+    case False{}:
+      IO.pure(Unit, Unit{})
+
+def transpile_ok_to(+jsp: String, js: String, map: String) -> IO(Unit):
+  do IO<Unit>:
+    u0 : Unit <- IO.try(Unit, Fs.mkdir_p(Compiler.dirname(jsp)))
+    u1 : Unit <- IO.try(Unit, Fs.mkdir_p(".knot/build-cache"))
+    u2 : Unit <- write_text(".knot/build-cache/v1", "1")
+    u3 : Unit <- write_text(jsp, js ++ "\n//# sourceMappingURL=" ++ Compiler.basename(jsp) ++ ".map\n")
+    write_text(jsp ++ ".map", map)
+
+
+def transpile_ok(+file: String, js: String, map: String) -> IO(Unit):
+  transpile_ok_to(Compiler.js_path(file), js, map)
+
+def transpile_write(+file: String, r: Compiler.TRes) -> IO(Unit):
+  match r:
+    case Compiler.TOk{js, map}:
+      transpile_ok(file, js, map)
+    case Compiler.TErr{msg, line, col}:
+      IO.die(Unit, 1, "knot: " ++ file ++ ":" ++ U32.show(U32.inc(line)) ++ ":" ++ U32.show(U32.inc(col)) ++ ": " ++ msg ++ " (syntax_error)")
+
+def transpile_write_to(+file: String, +jsp: String, r: Compiler.TRes) -> IO(Unit):
+  match r:
+    case Compiler.TOk{js, map}:
+      transpile_ok_to(jsp, js, map)
+    case Compiler.TErr{msg, line, col}:
+      IO.die(Unit, 1, "knot: " ++ file ++ ":" ++ U32.show(U32.inc(line)) ++ ":" ++ U32.show(U32.inc(col)) ++ ": " ++ msg ++ " (syntax_error)")
+
+def transpile_one_miss(+file: String, +src: String) -> IO(Unit):
+  do IO<Unit>:
+    u : Unit <- transpile_write(file, Compiler.transpile(file, src))
+    write_text(".knot/build-cache/src", src)
+
+def transpile_one_eq(+file: String, +src: String, eq: Bool) -> IO(Unit):
+  match eq:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      transpile_one_miss(file, src)
+
+def transpile_one_src_ex(+file: String, +src: String, ex: Bool) -> IO(Unit):
+  match ex:
+    case False{}:
+      transpile_one_miss(file, src)
+    case True{}:
+      do IO<Unit>:
+        +c : String <- read_text(".knot/build-cache/src")
+        transpile_one_eq(file, src, String.eq(src, c))
+
+def transpile_one_v1(+file: String, +src: String, v1: Bool) -> IO(Unit):
+  match v1:
+    case False{}:
+      transpile_one_miss(file, src)
+    case True{}:
+      do IO<Unit>:
+        ex : Bool <- file_exists(".knot/build-cache/src")
+        transpile_one_src_ex(file, src, ex)
+
+
+def transpile_one(+file: String) -> IO(Unit):
+  do IO<Unit>:
+    +src : String <- read_text(file)
+    v1 : Bool <- file_exists(".knot/build-cache/v1")
+    transpile_one_v1(file, src, v1)
+
+
+def transpile_one_to_min(+file: String, +out: String, minify: Bool, ids: Bool) -> IO(Unit):
+  do IO<Unit>:
+    src : String <- read_text(file)
+    transpile_write_to(file, out, Compiler.transpile_opt(file, src, minify, ids))
+
+def transpile_one_to(+file: String, +out: String) -> IO(Unit):
+  transpile_one_to_min(file, out, False{}, False{})
+
+
+def transpile_files(args: List<&2, String>, first: Bool) -> IO(Unit):
+  match args:
+    case Nil{}:
+      transpile_none(first)
+    case Con{+file, rest}:
+      do IO<Unit>:
+        u : Unit <- transpile_one(file)
+        transpile_files(rest, False{})
+
+def run_tp_ok_min(+file: String, +flag: String, +out: String, ok: Bool, minify: Bool, ids: Bool) -> IO(Unit):
+  match ok:
+    case True{}:
+      transpile_one_to_min(file, out, minify, ids)
+    case False{}:
+      transpile_files(Con{file, Con{flag, Con{out, Nil{}}}}, True{})
+
+def run_transpile_args(args: List<&2, String>, minify: Bool, ids: Bool) -> IO(Unit):
+  match args:
+    case Con{+file, Con{+flag, Con{+out, Nil{}}}}:
+      run_tp_ok_min(file, flag, out, String.eq(flag, "--outfile"), minify, ids)
+    case _:
+      transpile_files(args, True{})
+
+def run_transpile_i(+head: String, rest: List<&2, String>, mi: Bool) -> IO(Unit):
+  match mi:
+    case True{}:
+      run_transpile_args(rest, False{}, True{})
+    case False{}:
+      run_transpile_args(Con{head, rest}, False{}, False{})
+
+def run_transpile_h(+head: String, rest: List<&2, String>, mw: Bool) -> IO(Unit):
+  match mw:
+    case True{}:
+      run_transpile_args(rest, True{}, False{})
+    case False{}:
+      run_transpile_i(head, rest, String.eq(head, "--minify-identifiers"))
+
+def run_transpile(args: List<&2, String>) -> IO(Unit):
+  match args:
+    case Nil{}:
+      transpile_files(args, True{})
+    case Con{+head, rest}:
+      run_transpile_h(head, rest, String.eq(head, "--minify-whitespace"))
+
+
+
+
+def dispatch_transpile(+cmd: String, rest: List<&2, String>, is_transpile: Bool) -> IO(Unit):
+  match is_transpile:
+    case True{}:
+      run_transpile(rest)
+    case False{}:
+      dispatch_install(cmd, rest, String.eq(cmd, "install"))
+
+def scan_none(first: Bool) -> IO(Unit):
+  match first:
+    case True{}:
+      IO.die(Unit, 2, "knot: scan requires a file (missing_input)")
+    case False{}:
+      IO.pure(Unit, Unit{})
+
+def scan_write(+file: String, r: Compiler.TRes) -> IO(Unit):
+  match r:
+    case Compiler.TOk{js, map}:
+      IO.print(js)
+    case Compiler.TErr{msg, line, col}:
+      IO.die(Unit, 1, "knot: " ++ file ++ ":" ++ U32.show(U32.inc(line)) ++ ":" ++ U32.show(U32.inc(col)) ++ ": " ++ msg ++ " (syntax_error)")
+
+def scan_one(+file: String) -> IO(Unit):
+  do IO<Unit>:
+    src : String <- read_text(file)
+    scan_write(file, Compiler.scan(file, src))
+
+def scan_files(args: List<&2, String>, first: Bool) -> IO(Unit):
+  match args:
+    case Nil{}:
+      scan_none(first)
+    case Con{+file, rest}:
+      do IO<Unit>:
+        u : Unit <- scan_one(file)
+        scan_files(rest, False{})
+
+def run_scan(args: List<&2, String>) -> IO(Unit):
+  scan_files(args, True{})
+
+def dispatch_scan(+cmd: String, rest: List<&2, String>, is_scan: Bool) -> IO(Unit):
+  match is_scan:
+    case True{}:
+      run_scan(rest)
+    case False{}:
+      dispatch_transpile(cmd, rest, String.eq(cmd, "transpile"))
+
+
+
+def bundle_concat_empty(a: String, b: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      b
+    case False{}:
+      a ++ "\n" ++ b
+
+def bundle_concat(+a: String, b: String) -> String:
+  bundle_concat_empty(a, b, String.is_empty(a))
+
+def bundle_js(+file: String, r: Compiler.TRes) -> IO(String):
+  match r:
+    case Compiler.TOk{js, map}:
+      IO.pure(String, js)
+    case Compiler.TErr{msg, line, col}:
+      IO.die(String, 1, "knot: " ++ file ++ ":" ++ U32.show(U32.inc(line)) ++ ":" ++ U32.show(U32.inc(col)) ++ ": " ++ msg ++ " (syntax_error)")
+
+
+def die_missing(+spec: String) -> IO(String):
+  IO.die(String, 1, "knot: missing dependency " ++ spec ++ "; run knot install " ++ spec ++ " (missing_dependency)")
+
+def resolve_pkg_ts_ex(+spec: String, +ts: String, ex: Bool) -> IO(String):
+  match ex:
+    case True{}:
+      IO.pure(String, ts)
+    case False{}:
+      die_missing(spec)
+
+def resolve_pkg_ts(+spec: String) -> IO(String):
+  do IO<String>:
+    +ts : String = Compiler.pkg_index_ts(spec)
+    ex : Bool <- file_exists(ts)
+    resolve_pkg_ts_ex(spec, ts, ex)
+
+def resolve_pkg_js_ex(+spec: String, +js: String, ex: Bool) -> IO(String):
+  match ex:
+    case True{}:
+      IO.pure(String, js)
+    case False{}:
+      resolve_pkg_ts(spec)
+
+def resolve_pkg_index(+spec: String) -> IO(String):
+  do IO<String>:
+    +js : String = Compiler.pkg_index_js(spec)
+    ex : Bool <- file_exists(js)
+    resolve_pkg_js_ex(spec, js, ex)
+
+def resolve_pkg_main_ex(+spec: String, +path: String, ex: Bool) -> IO(String):
+  match ex:
+    case True{}:
+      IO.pure(String, path)
+    case False{}:
+      resolve_pkg_index(spec)
+
+def resolve_pkg_main_file(+spec: String, +main: String) -> IO(String):
+  do IO<String>:
+    +path : String = Compiler.pkg_join(spec, main)
+    ex : Bool <- file_exists(path)
+    resolve_pkg_main_ex(spec, path, ex)
+
+def resolve_pkg_main_s(+spec: String, +main: String, empty: Bool) -> IO(String):
+  match empty:
+    case True{}:
+      resolve_pkg_index(spec)
+    case False{}:
+      resolve_pkg_main_file(spec, main)
+
+def resolve_pkg_main_from_text(+spec: String, +text: String) -> IO(String):
+  do IO<String>:
+    +main : String <- json_optional_string(text, "main")
+    resolve_pkg_main_s(spec, main, String.is_empty(main))
+
+def resolve_pkg_expdot_s(+spec: String, +text: String, +expd: String, empty: Bool) -> IO(String):
+  match empty:
+    case True{}:
+      resolve_pkg_main_from_text(spec, text)
+    case False{}:
+      resolve_pkg_main_file(spec, expd)
+
+def resolve_pkg_expdot(+spec: String, +text: String) -> IO(String):
+  do IO<String>:
+    +expd : String <- json_optional_string(text, "exports/.")
+    resolve_pkg_expdot_s(spec, text, expd, String.is_empty(expd))
+
+def resolve_pkg_exp(+spec: String, +text: String, +exp: String, empty: Bool) -> IO(String):
+  match empty:
+    case True{}:
+      resolve_pkg_expdot(spec, text)
+    case False{}:
+      resolve_pkg_main_file(spec, exp)
+
+def resolve_pkg_main(+spec: String, +pj: String) -> IO(String):
+  do IO<String>:
+    +text : String <- read_text(pj)
+    +exp : String <- json_optional_string(text, "exports")
+    resolve_pkg_exp(spec, text, exp, String.is_empty(exp))
+
+
+def resolve_pkg_pj(+spec: String, +pj: String, ex: Bool) -> IO(String):
+  match ex:
+    case True{}:
+      resolve_pkg_main(spec, pj)
+    case False{}:
+      resolve_pkg_index(spec)
+
+def resolve_pkg(+spec: String) -> IO(String):
+  do IO<String>:
+    +pj : String = Compiler.pkg_json(spec)
+    ex : Bool <- file_exists(pj)
+    resolve_pkg_pj(spec, pj, ex)
+
+
+def resolve_rel_ts_ex(+path: String, +ts: String, ex: Bool) -> IO(String):
+  match ex:
+    case True{}:
+      IO.pure(String, ts)
+    case False{}:
+      die_missing(path)
+
+def resolve_rel_ts(+path: String) -> IO(String):
+  do IO<String>:
+    +ts : String = path ++ ".ts"
+    ex : Bool <- file_exists(ts)
+    resolve_rel_ts_ex(path, ts, ex)
+
+def resolve_rel_ex(+path: String, ex: Bool) -> IO(String):
+  match ex:
+    case True{}:
+      IO.pure(String, path)
+    case False{}:
+      resolve_rel_ts(path)
+
+def resolve_rel_file(+path: String) -> IO(String):
+  do IO<String>:
+    ex : Bool <- file_exists(path)
+    resolve_rel_ex(path, ex)
+
+
+def take_after_tab(s: String) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{'\t', t}:
+      t
+    case SCon{h, t}:
+      take_after_tab(t)
+
+def drop_last(s: String) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{h, SNil{}}:
+      ""
+    case SCon{h, t}:
+      SCon{h, drop_last(t)}
+
+def take_before_tab(s: String) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{'\t', t}:
+      ""
+    case SCon{h, t}:
+      SCon{h, take_before_tab(t)}
+
+def subst_star(val: String, +rest: String) -> String:
+  match val:
+    case SNil{}:
+      ""
+    case SCon{'*', t}:
+      rest ++ t
+    case SCon{h, t}:
+      SCon{h, subst_star(t, rest)}
+
+def alias_wild_ok(+spec: String, +prefix: String, +val: String, ok: Bool) -> String:
+  match ok:
+    case False{}:
+      ""
+    case True{}:
+      subst_star(val, String.drop(spec, String.length(prefix)))
+
+def alias_wild_pre(+spec: String, +prefix: String, +val: String) -> String:
+  alias_wild_ok(spec, prefix, val, String.starts_with(spec, prefix))
+
+def alias_wild_star(+spec: String, +key: String, +val: String, star: Bool) -> String:
+  match star:
+    case False{}:
+      ""
+    case True{}:
+      alias_wild_pre(spec, drop_last(key), val)
+
+def alias_wild_kv(+spec: String, +key: String, +val: String) -> String:
+  alias_wild_star(spec, key, val, String.ends_with(key, "/*"))
+
+def alias_wild(+line: String, +spec: String) -> String:
+  alias_wild_kv(spec, take_before_tab(line), take_after_tab(line))
+
+def alias_ok(+line: String, +spec: String, ok: Bool) -> String:
+  match ok:
+    case True{}:
+      take_after_tab(line)
+    case False{}:
+      alias_wild(line, spec)
+
+def alias_match(+line: String, +spec: String) -> String:
+  alias_ok(line, spec, String.starts_with(line, spec ++ "\t"))
+
+
+@unsafe def alias_pick(sel: Nat, lines: List<&2, String>, +spec: String, +hit: String, empty: Bool) -> String:
+  match sel:
+    case 0n:
+      match lines:
+        case Nil{}:
+          ""
+        case Con{+h, t}:
+          +found : String = alias_match(h, spec)
+          alias_pick(1n, t, spec, found, String.is_empty(found))
+    case _:
+      match empty:
+        case True{}:
+          alias_pick(0n, lines, spec, "", True{})
+        case False{}:
+          hit
+
+def resolve_alias_path(+importer: String, +spec: String, +mapped: String, empty: Bool) -> IO(String):
+  match empty:
+    case True{}:
+      resolve_pkg(spec)
+    case False{}:
+      resolve_rel_file(Compiler.resolve_rel(importer, mapped))
+
+def resolve_tsconfig_pairs(+importer: String, +spec: String, lines: List<&2, String>) -> IO(String):
+  do IO<String>:
+    +mapped : String = alias_pick(0n, lines, spec, "", True{})
+    resolve_alias_path(importer, spec, mapped, String.is_empty(mapped))
+
+def resolve_tsconfig_ex(+importer: String, +spec: String, ex: Bool) -> IO(String):
+  match ex:
+    case False{}:
+      resolve_pkg(spec)
+    case True{}:
+      do IO<String>:
+        text : String <- read_text("tsconfig.json")
+        pairs : String <- json_optional_pairs(text, "compilerOptions/paths")
+        resolve_tsconfig_pairs(importer, spec, String.lines(pairs))
+
+def resolve_tsconfig(+importer: String, +spec: String) -> IO(String):
+  do IO<String>:
+    ex : Bool <- file_exists("tsconfig.json")
+    resolve_tsconfig_ex(importer, spec, ex)
+
+def resolve_open_rel(+importer: String, +spec: String, rel: Bool) -> IO(String):
+  match rel:
+    case True{}:
+      resolve_rel_file(Compiler.resolve_rel(importer, spec))
+    case False{}:
+      resolve_tsconfig(importer, spec)
+
+
+def resolve_open(+importer: String, +spec: String) -> IO(String):
+  resolve_open_rel(importer, spec, Compiler.is_rel(spec))
+
+@unsafe def has_file(sel: Nat, xs: List<&2, String>, +f: String, eq: Bool) -> Bool:
+  match sel:
+    case 0n:
+      match xs:
+        case Nil{}:
+          False{}
+        case Con{+h, t}:
+          has_file(1n, t, f, String.eq(h, f))
+    case _:
+      match eq:
+        case True{}:
+          True{}
+        case False{}:
+          has_file(0n, xs, f, False{})
+
+
+def list_app(xs: List<&2, String>, x: String) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      Con{x, Nil{}}
+    case Con{h, t}:
+      Con{h, list_app(t, x)}
+
+@unsafe def collect_go(sel: Nat, +file: String, imps: List<&2, String>, +visited: List<&2, String>, seen: Bool) -> IO(List<&2, String>):
+  match sel:
+    case 0n:
+      match seen:
+        case True{}:
+          IO.pure(List<&2, String>, visited)
+        case False{}:
+          do IO<List<&2, String>>:
+            src : String <- read_text(file)
+            vis2 : List<&2, String> <- collect_go(1n, file, Compiler.imports_of(src), visited, False{})
+            return list_app(vis2, file)
+    case _:
+      match imps:
+        case Nil{}:
+          IO.pure(List<&2, String>, visited)
+        case Con{+spec, rest}:
+          do IO<List<&2, String>>:
+            +path : String <- resolve_open(file, spec)
+            vis2 : List<&2, String> <- collect_go(0n, path, Nil{}, visited, has_file(0n, visited, path, False{}))
+            collect_go(1n, file, rest, vis2, False{})
+
+def strs_cat(a: List<&2, String>, b: List<&2, String>) -> List<&2, String>:
+  match a:
+    case Nil{}:
+      b
+    case Con{h, t}:
+      Con{h, strs_cat(t, b)}
+
+def collect_keep(files: List<&2, String>) -> IO(List<&2, String>):
+  match files:
+    case Nil{}:
+      IO.pure(List<&2, String>, Nil{})
+    case Con{+f, rest}:
+      do IO<List<&2, String>>:
+        src : String <- read_text(f)
+        more : List<&2, String> <- collect_keep(rest)
+        return strs_cat(Compiler.import_names_of(src), more)
+
+def emit_one(+f: String, keep: List<&2, String>, shake: Bool) -> IO(String):
+  do IO<String>:
+    src : String <- read_text(f)
+    bundle_js(f, Compiler.transpile_bundle_keep(f, src, keep, shake))
+
+def emit_files(files: List<&2, String>, +keep: List<&2, String>) -> IO(String):
+  match files:
+    case Nil{}:
+      IO.pure(String, "")
+    case Con{+f, Nil{}}:
+      emit_one(f, keep, False{})
+    case Con{+f, rest}:
+      do IO<String>:
+        js : String <- emit_one(f, keep, True{})
+        more : String <- emit_files(rest, keep)
+        return bundle_concat(js, more)
+
+def bundle_entry(+file: String) -> IO(String):
+  do IO<String>:
+    +files : List<&2, String> <- collect_go(0n, file, Nil{}, Nil{}, False{})
+    keep : List<&2, String> <- collect_keep(files)
+    emit_files(files, keep)
+
+
+
+def hash_ok(+c: Char) -> Bool:
+  Bool.and(Bool.not(Char.is_eq(c, '+')), Bool.and(Bool.not(Char.is_eq(c, '/')), Bool.not(Char.is_eq(c, '='))))
+
+@unsafe def take_hash(sel: Nat, s: String, n: Nat, acc: String, c: Char, ok: Bool) -> String:
+  match sel:
+    case 0n:
+      match n:
+        case 0n:
+          String.reverse(acc)
+        case _:
+          take_hash(3n, s, n, acc, c, ok)
+    case 3n:
+      match s:
+        case SNil{}:
+          String.reverse(acc)
+        case SCon{+h, t}:
+          take_hash(1n, t, n, acc, h, hash_ok(h))
+    case 1n:
+      match ok:
+        case True{}:
+          take_hash(4n, s, n, acc, c, ok)
+        case False{}:
+          take_hash(0n, s, n, acc, 'a', False{})
+    case _:
+      match n:
+        case 0n:
+          String.reverse(acc)
+        case 1n+n2:
+          take_hash(0n, s, n2, SCon{c, acc}, 'a', False{})
+
+
+@unsafe def str_replace(sel: Nat, +hay: String, +needle: String, +rep: String, ok: Bool, empty: Bool) -> String:
+  match sel:
+    case 0n:
+      str_replace(1n, hay, needle, rep, String.starts_with(hay, needle), False{})
+    case 1n:
+      match ok:
+        case True{}:
+          rep ++ String.drop(hay, String.length(needle))
+        case False{}:
+          str_replace(2n, hay, needle, rep, False{}, String.is_empty(hay))
+    case _:
+      match empty:
+        case True{}:
+          ""
+        case False{}:
+          +h1 : String = String.take(hay, 1n)
+          +h2 : String = String.drop(hay, 1n)
+          h1 ++ str_replace(0n, h2, needle, rep, False{}, False{})
+
+
+
+def dyn_old_rel(rel: Bool, +spec: String) -> String:
+  match rel:
+    case True{}:
+      "./" ++ Compiler.basename(Compiler.js_path(String.drop(spec, 2n)))
+    case False{}:
+      Compiler.basename(Compiler.js_path(spec))
+
+def dyn_old(+spec: String) -> String:
+  dyn_old_rel(String.starts_with(spec, "./"), spec)
+
+def emit_dyn_one(+importer: String, +outdir: String, +spec: String) -> IO(String):
+  do IO<String>:
+    +path : String <- resolve_open(importer, spec)
+    src : String <- read_text(path)
+    js : String <- bundle_js(path, Compiler.transpile(path, src))
+    +got : String <- IO.try(String, Hash.sha512_b64(path))
+    +name : String = take_hash(0n, got, 8n, "", 'a', False{}) ++ ".js"
+    u : Unit <- transpile_ok_to(Compiler.join_rel(outdir, name), js, Compiler.make_map(path))
+    return name
+
+def emit_dyn_go(+importer: String, +out: String, +spec: String) -> IO(Unit):
+  do IO<Unit>:
+    +name : String <- emit_dyn_one(importer, Compiler.dirname(out), spec)
+    js : String <- read_text(out)
+    write_text(out, str_replace(0n, js, dyn_old(spec), "./" ++ name, False{}, False{}))
+
+def emit_dyn(+importer: String, +out: String, specs: List<&2, String>) -> IO(Unit):
+  match specs:
+    case Nil{}:
+      IO.pure(Unit, Unit{})
+    case Con{+spec, rest}:
+      do IO<Unit>:
+        u : Unit <- emit_dyn_go(importer, out, spec)
+        emit_dyn(importer, out, rest)
+
+
+def emit_req_one(+importer: String, +outdir: String, +spec: String) -> IO(Unit):
+  do IO<Unit>:
+    +path : String <- resolve_open(importer, spec)
+    src : String <- read_text(path)
+    js : String <- bundle_js(path, Compiler.transpile(path, src))
+    transpile_ok_to(Compiler.join_rel(outdir, Compiler.basename(Compiler.js_path(path))), js, Compiler.make_map(path))
+
+def emit_req(+importer: String, +out: String, specs: List<&2, String>) -> IO(Unit):
+  match specs:
+    case Nil{}:
+      IO.pure(Unit, Unit{})
+    case Con{+spec, rest}:
+      do IO<Unit>:
+        u : Unit <- emit_req_one(importer, Compiler.dirname(out), spec)
+        emit_req(importer, out, rest)
+
+def bundle_write_dyn(+file: String, +out: String, +src: String) -> IO(Unit):
+  do IO<Unit>:
+    u : Unit <- emit_dyn(file, out, Compiler.dyn_imports_of(src))
+    emit_req(file, out, Compiler.requires_of(src))
+
+def bundle_write(+file: String, +out: String) -> IO(Unit):
+  do IO<Unit>:
+    js : String <- bundle_entry(file)
+    u0 : Unit <- transpile_ok_to(out, js, Compiler.make_map(file))
+    +src : String <- read_text(file)
+    bundle_write_dyn(file, out, src)
+
+
+
+def run_build_flag(+file: String, +flag: String, +out: String, ok: Bool) -> IO(Unit):
+  match ok:
+    case True{}:
+      bundle_write(file, out)
+    case False{}:
+      IO.die(Unit, 2, "knot: bundling is not implemented; use build --no-bundle (bundle_unsupported)")
+
+def run_build_out(+file: String, rest: List<&2, String>) -> IO(Unit):
+  match rest:
+    case Con{+flag, Con{+out, Nil{}}}:
+      run_build_flag(file, flag, out, String.eq(flag, "--outfile"))
+    case Nil{}:
+      bundle_write(file, Compiler.js_path(file))
+    case _:
+      IO.die(Unit, 2, "knot: build requires --outfile or --no-bundle (unknown_command)")
+
+def run_build_nb(no_bundle: Bool, +head: String, rest: List<&2, String>) -> IO(Unit):
+  match no_bundle:
+    case True{}:
+      run_transpile(rest)
+    case False{}:
+      run_build_out(head, rest)
+
+@unsafe def watch_loop(sel: Nat, +file: String, +last: String, +src: String, same: Bool) -> IO(Unit):
+  match sel:
+    case 0n:
+      do IO<Unit>:
+        u : Unit <- IO.sleep(50)
+        +now : String <- read_text(file)
+        watch_loop(1n, file, last, now, String.eq(last, now))
+    case _:
+      match same:
+        case True{}:
+          watch_loop(0n, file, last, src, False{})
+        case False{}:
+          do IO<Unit>:
+            u : Unit <- transpile_one(file)
+            watch_loop(0n, file, src, src, False{})
+
+def watch_transpile(args: List<&2, String>) -> IO(Unit):
+  match args:
+    case Con{+file, _}:
+      do IO<Unit>:
+        u : Unit <- transpile_one(file)
+        +src : String <- read_text(file)
+        watch_loop(0n, file, src, src, False{})
+    case Nil{}:
+      IO.die(Unit, 2, "knot: build requires a file (missing_input)")
+
+def concat_sources(files: List<&2, String>) -> IO(String):
+  match files:
+    case Nil{}:
+      IO.pure(String, "")
+    case Con{+f, rest}:
+      do IO<String>:
+        src : String <- read_text(f)
+        more : String <- concat_sources(rest)
+        return f ++ ":" ++ src ++ more
+
+def fingerprint(+file: String) -> IO(String):
+  do IO<String>:
+    files : List<&2, String> <- collect_go(0n, file, Nil{}, Nil{}, False{})
+    srcs : String <- concat_sources(files)
+    listed : String <- IO.try(String, Fs.read_dir(Compiler.dirname(file)))
+    return listed ++ "\n" ++ srcs
+
+
+@unsafe def watch_bundle_loop(sel: Nat, +file: String, +out: String, +last: String, +src: String, same: Bool) -> IO(Unit):
+  match sel:
+    case 0n:
+      do IO<Unit>:
+        u : Unit <- IO.sleep(50)
+        +now : String <- fingerprint(file)
+        watch_bundle_loop(1n, file, out, last, now, String.eq(last, now))
+    case _:
+      match same:
+        case True{}:
+          watch_bundle_loop(0n, file, out, last, src, False{})
+        case False{}:
+          do IO<Unit>:
+            u : Unit <- bundle_write(file, out)
+            watch_bundle_loop(0n, file, out, src, src, False{})
+
+def run_watch_flag(+file: String, +flag: String, +out: String, ok: Bool) -> IO(Unit):
+  match ok:
+    case True{}:
+      do IO<Unit>:
+        u : Unit <- bundle_write(file, out)
+        +fp : String <- fingerprint(file)
+        watch_bundle_loop(0n, file, out, fp, fp, False{})
+    case False{}:
+      IO.die(Unit, 2, "knot: watch requires --outfile (unknown_command)")
+
+def run_watch_out(+file: String, rest: List<&2, String>) -> IO(Unit):
+  match rest:
+    case Con{+flag, Con{+out, Nil{}}}:
+      run_watch_flag(file, flag, out, String.eq(flag, "--outfile"))
+    case _:
+      IO.die(Unit, 2, "knot: watch requires --outfile (unknown_command)")
+
+def run_watch_nb(nb: Bool, +head: String, rest: List<&2, String>) -> IO(Unit):
+  match nb:
+    case True{}:
+      watch_transpile(rest)
+    case False{}:
+      run_watch_out(head, rest)
+
+
+def run_watch(args: List<&2, String>) -> IO(Unit):
+  match args:
+    case Nil{}:
+      IO.die(Unit, 2, "knot: build requires a file (missing_input)")
+    case Con{+head, rest}:
+      run_watch_nb(String.eq(head, "--no-bundle"), head, rest)
+
+def run_build_w(+head: String, rest: List<&2, String>, watch: Bool) -> IO(Unit):
+  match watch:
+    case True{}:
+      run_watch(rest)
+    case False{}:
+      run_build_nb(String.eq(head, "--no-bundle"), head, rest)
+
+def run_build(args: List<&2, String>) -> IO(Unit):
+  match args:
+    case Nil{}:
+      IO.die(Unit, 2, "knot: build requires a file (missing_input)")
+    case Con{+head, rest}:
+      run_build_w(head, rest, String.eq(head, "--watch"))
+
+
+
+def run_clean_bc(ok: Bool) -> IO(Unit):
+  match ok:
+    case True{}:
+      do IO<Unit>:
+        u : Unit <- IO.try(Unit, Fs.unlink(".knot/build-cache/v1"))
+        return Unit{}
+    case False{}:
+      IO.die(Unit, 2, "knot: unknown command clean (unknown_command)")
+
+def run_clean(args: List<&2, String>) -> IO(Unit):
+  match args:
+    case Con{+flag, _}:
+      run_clean_bc(String.eq(flag, "--build-cache"))
+    case Nil{}:
+      IO.die(Unit, 2, "knot: unknown command clean (unknown_command)")
+
+def dispatch_build(+cmd: String, rest: List<&2, String>, is_build: Bool) -> IO(Unit):
+  match is_build:
+    case True{}:
+      run_build(rest)
+    case False{}:
+      dispatch_scan(cmd, rest, String.eq(cmd, "scan"))
+
+def dispatch_clean(+cmd: String, rest: List<&2, String>, is_clean: Bool) -> IO(Unit):
+  match is_clean:
+    case True{}:
+      run_clean(rest)
+    case False{}:
+      dispatch_build(cmd, rest, String.eq(cmd, "build"))
+
+
 def run_help() -> IO(Unit):
-  IO.print("Usage: knot <command>\n\nCommands:\n  install      Install dependencies from package.json\n  add          Add a dependency and install\n  remove       Remove a dependency\n  update       Re-resolve dependency ranges\n  list         Print direct dependencies\n  why          Show why a package is installed\n  fetch        Fill the store from the lockfile\n  store        Inspect the content-addressed store\n  cache clean  Remove the registry metadata cache")
+  IO.print("Usage: knot <command>\n\nCommands:\n  install      Install dependencies from package.json\n  add          Add a dependency and install\n  remove       Remove a dependency\n  update       Re-resolve dependency ranges\n  list         Print direct dependencies\n  why          Show why a package is installed\n  fetch        Fill the store from the lockfile\n  store        Inspect the content-addressed store\n  cache clean  Remove the registry metadata cache\n  transpile    Transform TypeScript or JavaScript without bundling\n  scan         Print runtime imports and exports as JSON\n  build        Compile entry points; --no-bundle skips graph linking\n  clean        Remove compiler caches with --build-cache")
 
 def dispatch_version(+cmd: String, rest: List<&2, String>, is_version: Bool) -> IO(Unit):
   match is_version:
     case True{}:
       IO.print("0.0.0")
     case False{}:
-      dispatch_install(cmd, rest, String.eq(cmd, "install"))
+      dispatch_clean(cmd, rest, String.eq(cmd, "clean"))
+
 
 def dispatch_help(+cmd: String, rest: List<&2, String>, is_help: Bool) -> IO(Unit):
   match is_help:
