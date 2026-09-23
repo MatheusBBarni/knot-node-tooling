@@ -468,15 +468,6 @@ def str_rev(xs: List<&2, String>, acc: List<&2, String>) -> List<&2, String>:
     case Con{h, t}:
       str_rev(t, Con{h, acc})
 
-def join_sp(xs: List<&2, String>) -> String:
-  match xs:
-    case Nil{}:
-      ""
-    case Con{h, Nil{}}:
-      h
-    case Con{h, t}:
-      h ++ " " ++ join_sp(t)
-
 def tok_is_num(s: String) -> Bool:
   match s:
     case SNil{}:
@@ -489,6 +480,32 @@ def needs_space_side(+s: String) -> Bool:
 
 def needs_space(+a: String, +b: String) -> Bool:
   Bool.and(needs_space_side(a), needs_space_side(b))
+
+# Pretty join: space beside ident/num, but keep multi-char punct ops glued (||, =>, ..., ??).
+def needs_pretty_space(+a: String, +b: String) -> Bool:
+  Bool.or(needs_space_side(a), needs_space_side(b))
+
+@unsafe def join_sp_go(sel: Nat, +prev: String, xs: List<&2, String>, +h: String, gap: Bool) -> String:
+  match sel:
+    case 0n:
+      match xs:
+        case Nil{}:
+          ""
+        case Con{+n, t}:
+          join_sp_go(1n, prev, t, n, needs_pretty_space(prev, n))
+    case _:
+      match gap:
+        case True{}:
+          " " ++ h ++ join_sp_go(0n, h, xs, "", False{})
+        case False{}:
+          h ++ join_sp_go(0n, h, xs, "", False{})
+
+def join_sp(xs: List<&2, String>) -> String:
+  match xs:
+    case Nil{}:
+      ""
+    case Con{+h, t}:
+      h ++ join_sp_go(0n, h, t, "", False{})
 
 @unsafe def join_min_go(sel: Nat, +prev: String, xs: List<&2, String>, +h: String, gap: Bool) -> String:
   match sel:

@@ -5,6 +5,69 @@ class TsLower {
     return new TsLower(src).run();
   }
 
+  /** Strip `: type` / optional `?` from a `(...)` parameter list text. */
+  static stripParamTypes(params) {
+    let out = "";
+    let i = 0;
+    const n = params.length;
+    while (i < n) {
+      const c = params[i];
+      if (c === "'" || c === '"') {
+        const q = c;
+        out += params[i++];
+        while (i < n) {
+          const d = params[i++];
+          out += d;
+          if (d === "\\" && i < n) out += params[i++];
+          else if (d === q) break;
+        }
+        continue;
+      }
+      if (c === "?") { i++; continue; }
+      if (c === ":") {
+        i++;
+        let depth = 0;
+        while (i < n) {
+          const d = params[i];
+          if (d === "'" || d === '"') {
+            const q = d;
+            i++;
+            while (i < n) {
+              const e = params[i++];
+              if (e === "\\") i++;
+              else if (e === q) break;
+            }
+            continue;
+          }
+          if (d === "(" || d === "{" || d === "[") { depth++; i++; continue; }
+          if (d === ")" || d === "}" || d === "]") {
+            if (depth === 0) break;
+            depth--;
+            i++;
+            continue;
+          }
+          if (depth === 0 && (d === "," || d === "=" || d === ")")) break;
+          i++;
+        }
+        continue;
+      }
+      // Drop accessibility / readonly modifiers in params.
+      if (/[A-Za-z_$]/.test(c)) {
+        const start = i;
+        while (i < n && /[A-Za-z0-9_$]/.test(params[i])) i++;
+        const id = params.slice(start, i);
+        if (id === "public" || id === "private" || id === "protected" || id === "readonly") {
+          while (i < n && /\s/.test(params[i])) i++;
+          continue;
+        }
+        out += id;
+        continue;
+      }
+      out += params[i++];
+    }
+    return out;
+  }
+
   constructor(src) {
     this.src = src;
     this.i = 0;
@@ -283,7 +346,9 @@ class TsLower {
     const inner = body.slice(1, -1);
     const lowered = this.lowerNamespaceBody(name, inner);
     const decl = `const ${name} = (function () {\n  const ${name} = {};\n${lowered}  return ${name};\n})();`;
-    return exported ? `export ${decl}` : decl;
+    // Second pass: lower constructor param props / satisfies inside the IIFE (no nested namespaces).
+    const refined = new TsLower(decl).run();
+    return exported ? `export ${refined}` : refined;
   }
 
   lowerNamespaceBody(ns, body) {
@@ -293,6 +358,24 @@ class TsLower {
     const n = body.length;
     const startsIdent = (c) => /[A-Za-z_$]/.test(c);
     const isIdent = (c) => /[A-Za-z0-9_$]/.test(c);
+    const members = new Set();
+    const rewriteMembers = (src, skip = new Set()) => {
+      if (members.size === 0) return src;
+      return src.replace(/\b([A-Za-z_$][\w$]*)\b/g, (id) => {
+        if (skip.has(id) || id === ns) return id;
+        if (members.has(id)) return `${ns}.${id}`;
+        return id;
+      });
+    };
+    const collectParamNames = (paramsText) => {
+      const skip = new Set();
+      const inner = paramsText.replace(/^\(|\)$/g, "");
+      for (const part of inner.split(",")) {
+        const m = part.trim().match(/^(?:public|private|protected|readonly\s+)*([A-Za-z_$][\w$]*)/);
+        if (m) skip.add(m[1]);
+      }
+      return skip;
+    };
     while (i < n) {
       // skip whitespace/comments quickly by copying until potential export
       if (body.startsWith("export", i) && (i === 0 || !isIdent(body[i - 1])) && !isIdent(body[i + 6] || "")) {
@@ -304,6 +387,35 @@ class TsLower {
           while (i < n && /\s/.test(body[i])) i++;
           let name = "";
           while (i < n && isIdent(body[i])) name += body[i++];
+          while (i < n && /\s/.test(body[i])) i++;
+          if (body[i] === "?") i++;
+          // Skip TypeScript type annotation so `export const x: number = 1` still lowers.
+          if (body[i] === ":") {
+            i++;
+            let depth = 0;
+            while (i < n) {
+              const c = body[i];
+              if (c === "'" || c === '"') {
+                const q = c;
+                i++;
+                while (i < n) {
+                  const d = body[i++];
+                  if (d === "\\") i++;
+                  else if (d === q) break;
+                }
+                continue;
+              }
+              if (c === "(" || c === "{" || c === "[") { depth++; i++; continue; }
+              if (c === ")" || c === "}" || c === "]") {
+                if (depth === 0) break;
+                depth--;
+                i++;
+                continue;
+              }
+              if (depth === 0 && (c === "=" || c === ";" || c === "\n" || c === ",")) break;
+              i++;
+            }
+          }
           while (i < n && /\s/.test(body[i])) i++;
           if (body[i] === "=") {
             i++;
@@ -337,7 +449,8 @@ class TsLower {
             }
             const expr = body.slice(exprStart, i).trim();
             if (body[i] === ";") i++;
-            out += `  ${ns}.${name} = ${expr};\n`;
+            members.add(name);
+            out += `  ${ns}.${name} = ${rewriteMembers(expr)};\n`;
             continue;
           }
         }
@@ -360,6 +473,39 @@ class TsLower {
               }
             }
             while (i < n && /\s/.test(body[i])) i++;
+            // Skip return type annotation before the body.
+            if (body[i] === ":") {
+              i++;
+              let tdepth = 0;
+              while (i < n) {
+                const c = body[i];
+                if (c === "'" || c === '"') {
+                  const q = c;
+                  i++;
+                  while (i < n) {
+                    const d = body[i++];
+                    if (d === "\\") i++;
+                    else if (d === q) break;
+                  }
+                  continue;
+                }
+                if (c === "(" || c === "{" || c === "[") {
+                  if (c === "{" && tdepth === 0) break;
+                  tdepth++;
+                  i++;
+                  continue;
+                }
+                if (c === ")" || c === "}" || c === "]") {
+                  if (tdepth === 0) break;
+                  tdepth--;
+                  i++;
+                  continue;
+                }
+                if (tdepth === 0 && c === "{") break;
+                i++;
+              }
+              while (i < n && /\s/.test(body[i])) i++;
+            }
             if (body[i] === "{") {
               depth = 0;
               const bstart = i;
@@ -372,16 +518,53 @@ class TsLower {
                 }
               }
               let fnBody = body.slice(bstart, i);
-              // rewrite bare ns member refs: simple `return x` -> `return ns.x` for known pattern
-              // Prefer rewriting identifier x that was exported as const onto ns.
-              fnBody = fnBody.replace(/\breturn\s+([A-Za-z_$][\w$]*)\b/g, (m, id) => {
-                if (id === ns) return m;
-                return `return ${ns}.${id}`;
-              });
-              out += `  function ${name}${body.slice(start, bstart)}${fnBody}\n`;
+              const paramEnd = (() => {
+                let d = 0;
+                for (let j = start; j < bstart; j++) {
+                  if (body[j] === "(") d++;
+                  else if (body[j] === ")") {
+                    d--;
+                    if (d === 0) return j + 1;
+                  }
+                }
+                return bstart;
+              })();
+              const paramSlice = TsLower.stripParamTypes(body.slice(start, paramEnd));
+              const skip = collectParamNames(paramSlice);
+              skip.add(name);
+              fnBody = rewriteMembers(fnBody, skip);
+              members.add(name);
+              out += `  function ${name}${paramSlice}${fnBody}\n`;
               out += `  ${ns}.${name} = ${name};\n`;
               continue;
             }
+          }
+        }
+        if (body.startsWith("class", i)) {
+          i += 5;
+          while (i < n && /\s/.test(body[i])) i++;
+          let cname = "";
+          while (i < n && isIdent(body[i])) cname += body[i++];
+          while (i < n && /\s/.test(body[i])) i++;
+          if (body[i] === "{") {
+            let depth = 0;
+            const cstart = i;
+            while (i < n) {
+              const c = body[i++];
+              if (c === "{") depth++;
+              else if (c === "}") {
+                depth--;
+                if (depth === 0) break;
+              }
+            }
+            const classSrc = `class ${cname}${body.slice(cstart, i)}`;
+            const loweredClass = new TsLower(classSrc).run();
+            out += `  ${loweredClass}\n`;
+            if (cname) {
+              members.add(cname);
+              out += `  ${ns}.${cname} = ${cname};\n`;
+            }
+            continue;
           }
         }
         // fallback: keep rest including "export" dropped already - put back export-less

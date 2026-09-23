@@ -16,8 +16,8 @@ The native coordinator uses an external JavaScript runtime only when generated c
 > [!IMPORTANT]
 > There is no installable release yet.
 > Build `bin/knot` from this repository with `./scripts/build-knot`.
-> `knot install` and a first TypeScript transpile path run today.
-> Bundling, watch mode, and the test runner are still design-only.
+> `knot install`, `knot transpile`, `knot scan`, `knot analyze`, and a first `knot build` path (including `--watch`) run today.
+> The test runner is still design-only.
 > Transpilation does not type-check and does not emit `.d.ts` files.
 > The Bend2 pin is [`toolchain.json`](./toolchain.json) (Bend 2.0.4).
 > Host-effect notes are in [Bend2 capability](./docs/bend2-capability.md).
@@ -55,8 +55,8 @@ Tests run through an external Node.js installation.
 
 ## Commands
 
-`knot install`, `knot add`, `knot remove`, `knot fetch`, `knot why`, `knot transpile`, `knot scan`, and `knot build --no-bundle` run in this tree.
-The bundler and test runner are still product plans.
+`knot install`, `knot add`, `knot remove`, `knot fetch`, `knot why`, `knot transpile`, `knot scan`, `knot analyze`, and `knot build` (including `--no-bundle` and `--watch`) run in this tree.
+The test runner is still a product plan.
 
 | Command | Status | Purpose |
 | --- | --- | --- |
@@ -68,8 +68,9 @@ The bundler and test runner are still product plans.
 | `knot update [name]` | planned | Update dependencies within declared ranges |
 | `knot transpile <files...>` | works for a TypeScript subset | Strip types and emit JavaScript plus a source map next to each file |
 | `knot scan <files...>` | works for a TypeScript subset | Print runtime imports and exports as JSON |
+| `knot analyze <entrypoints...>` | works for a TypeScript subset | Walk the import graph and print entries/modules/missing as JSON |
 | `knot build --no-bundle <files...>` | works for a TypeScript subset | Same no-bundle transform as `transpile` |
-| `knot build <entrypoints...>` | planned | Resolve, bundle, and emit application or library outputs |
+| `knot build <entrypoints...>` | works for a JavaScript/TypeScript subset | Resolve, tree-shake, and emit application outputs (see flags below) |
 | `knot test [filters...]` | planned | Discover, compile, isolate, and execute tests |
 
 > [!NOTE]
@@ -94,16 +95,23 @@ Knot is faster than npm 11 and pnpm 11 on that same machine and method.
 The notes in those files list versions, the mismatched lock graphs, and what was not measured.
 
 ## Compilation and bundling
-`knot transpile` and `knot build --no-bundle` strip type annotations and lower JSX/TSX (classic `React.createElement` by default; `--jsx-runtime automatic` for `react/jsx-runtime`), `interface` and `type` declarations, `import type`, and `as` assertions, and lower numeric `enum` declarations to `const` objects.
+`knot transpile` and `knot build --no-bundle` strip type annotations and lower JSX/TSX (classic `React.createElement` by default; `--jsx-runtime automatic|preserve` and `--jsx-factory` / `--jsx-fragment` / `--jsx-import-source`), `interface` and `type` declarations, `import type`, and `as` assertions, and lower numeric `enum` declarations, value `namespace`s, constructor parameter properties, and `satisfies` expressions.
+`--sourcemap linked|external|none` controls map emit (default `linked`).
 `--minify-whitespace` inserts spaces only between identifiers and numbers.
 `--minify-identifiers` keeps exported function names and shortens other identifiers.
-`knot build <entry> --outfile out.js` follows relative `./` imports, `require("./file.ts")`, `tsconfig.json` `compilerOptions.paths` aliases including `@app/*` wildcards, and bare specifiers via `package.json` `exports` or `main`, then `index.js`/`index.ts`, drops unused `function` declarations from non-entry modules, writes a content-hashed `.js` chunk for `import("./file.ts")`, and writes `require()` targets next to the bundle as `.js`.
+`knot build <entry> --outfile out.js` follows relative `./` imports, `require("./file.ts")`, `tsconfig.json` `compilerOptions.paths` aliases including `@app/*` wildcards, and bare specifiers via `package.json` `exports` or `main` (honoring `--conditions` and `sideEffects`), then `index.js`/`index.ts`, drops unused `function` declarations from non-entry modules, writes a content-hashed `.js` chunk for `import("./file.ts")`, writes `require()` targets next to the bundle as `.js`, and can write a JSON `--metafile`.
 Successful emits write `.knot/build-cache/v1` and the source used for the last emit. A later `build --no-bundle` of unchanged source reuses that record and does not rewrite JavaScript.
 `knot clean --build-cache` deletes `.knot/build-cache/v1` and leaves JavaScript output in place.
 `knot build --watch --no-bundle <file.ts>` rebuilds that file when its contents change.
 `knot build --watch <entry.ts> --outfile out.js` rebuilds the bundle when any file in the import graph changes or a new file appears in the entry directory.
+`knot analyze <entry.ts>` prints the reachable import graph as JSON.
 Unsupported syntax must fail with `syntax_error` and must not write JavaScript.
-It will support browser and Node.js targets, ESM and CommonJS output, tree shaking, code splitting, source maps, CSS, HTML, and static assets.
+
+Known transpile limits in this tree:
+- `import fs = require("x")` lowers to a default ESM import (`import fs from "x"`), not `import * as fs`, because the type eraser also strips the `as` keyword.
+- CSS, HTML, and static-asset bundling are still ahead.
+
+It will support broader browser and Node.js targets, ESM and CommonJS output, richer tree shaking, code splitting, CSS, HTML, and static assets.
 
 Builds will not access the network or install missing packages implicitly.
 A failed build will not expose a mixture of old and new artifacts.
