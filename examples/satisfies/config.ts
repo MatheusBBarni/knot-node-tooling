@@ -1,0 +1,2 @@
+const config = { port: 3000 } satisfies { port: number };
+console.log(config.port);

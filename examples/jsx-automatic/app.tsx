@@ -1,3 +1,3 @@
-export function App() {
-  return <div className="root" title="hello" />;
+export function App(label: string) {
+  return <div className="root">{label}</div>;
 }
