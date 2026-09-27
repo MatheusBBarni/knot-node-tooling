@@ -45,6 +45,7 @@ jobs:
           mkdir -p "$HOME/.bend"
           tar -xzf /tmp/bend.tar.gz --strip-components=1 -C "$HOME/.bend"
           echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.bend/bin:$PATH"
           bend version
 
       - name: Build knot
