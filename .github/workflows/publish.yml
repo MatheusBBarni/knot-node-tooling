@@ -130,7 +130,8 @@ jobs:
           publish_package() {
             dir="$1"
             error_file="$(mktemp)"
-            if (cd "$dir" && npm stage publish --access public) 2>"$error_file"; then
+            if (cd "$dir" && npm stage publish --access public) >"$error_file" 2>&1; then
+              cat "$error_file"
               rm -f "$error_file"
               return 0
             fi
@@ -141,12 +142,14 @@ jobs:
             fi
             rm -f "$error_file"
             publish_error="$(mktemp)"
-            if ! (cd "$dir" && npm publish --access public) 2>"$publish_error"; then
+            if ! (cd "$dir" && npm publish --access public) >"$publish_error" 2>&1; then
               if ! grep -q 'previously published versions' "$publish_error"; then
                 cat "$publish_error"
                 rm -f "$publish_error"
                 return 1
               fi
+            else
+              cat "$publish_error"
             fi
             rm -f "$publish_error"
           }
@@ -161,7 +164,8 @@ jobs:
         run: |
           set -eu
           error_file="$(mktemp)"
-          if npm stage publish --access public 2>"$error_file"; then
+          if npm stage publish --access public >"$error_file" 2>&1; then
+            cat "$error_file"
             rm -f "$error_file"
             exit 0
           fi
@@ -172,12 +176,14 @@ jobs:
           fi
           rm -f "$error_file"
           publish_error="$(mktemp)"
-          if ! npm publish --access public 2>"$publish_error"; then
+          if ! npm publish --access public >"$publish_error" 2>&1; then
             if ! grep -q 'previously published versions' "$publish_error"; then
               cat "$publish_error"
               rm -f "$publish_error"
               exit 1
             fi
+          else
+            cat "$publish_error"
           fi
           rm -f "$publish_error"
 
