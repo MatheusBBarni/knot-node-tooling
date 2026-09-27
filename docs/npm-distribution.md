@@ -309,7 +309,7 @@ If a token is retained instead, the release gate must not describe that run as t
 The workflow attempts `npm stage publish --access public` first.
 Npm rejects that command for a package name that does not already exist.
 The workflow falls back to `npm publish --access public` only for that package-not-found response.
-The workflow fails on other registry errors.
+If the bootstrap publish already succeeded and a release retry sees the same version, the exact `previously published versions` error is treated as success.
 `actions/setup-node` sets `registry-url` to `https://registry.npmjs.org`, which makes npm read `NODE_AUTH_TOKEN`.
 That variable is the Actions secret `NPM_TOKEN`.
 The secret value is not written into the repository.

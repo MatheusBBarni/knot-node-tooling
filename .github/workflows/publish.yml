@@ -140,7 +140,15 @@ jobs:
               return 1
             fi
             rm -f "$error_file"
-            (cd "$dir" && npm publish --access public)
+            publish_error="$(mktemp)"
+            if ! (cd "$dir" && npm publish --access public) 2>"$publish_error"; then
+              if ! grep -q 'previously published versions' "$publish_error"; then
+                cat "$publish_error"
+                rm -f "$publish_error"
+                return 1
+              fi
+            fi
+            rm -f "$publish_error"
           }
           for dir in release/npm/knot-*; do
             publish_package "$dir"
@@ -163,7 +171,15 @@ jobs:
             exit 1
           fi
           rm -f "$error_file"
-          npm publish --access public
+          publish_error="$(mktemp)"
+          if ! npm publish --access public 2>"$publish_error"; then
+            if ! grep -q 'previously published versions' "$publish_error"; then
+              cat "$publish_error"
+              rm -f "$publish_error"
+              exit 1
+            fi
+          fi
+          rm -f "$publish_error"
 
       - name: Upload release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
