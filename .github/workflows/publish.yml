@@ -121,21 +121,51 @@ jobs:
           NODE
           node scripts/release-assets.mjs
 
-      - name: Stage platform packages
+      - name: Publish platform packages
         shell: bash
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -eu
+          publish_package() {
+            dir="$1"
+            name="$(node -p "require('./$dir/package.json').name")"
+            error_file="$(mktemp)"
+            if npm view "$name" name >/dev/null 2>"$error_file"; then
+              (cd "$dir" && npm stage publish --access public)
+            else
+              if ! grep -Eq 'E404|404 Not Found' "$error_file"; then
+                cat "$error_file"
+                rm -f "$error_file"
+                return 1
+              fi
+              (cd "$dir" && npm publish --access public)
+            fi
+            rm -f "$error_file"
+          }
           for dir in release/npm/knot-*; do
-            (cd "$dir" && npm stage publish --access public)
+            publish_package "$dir"
           done
 
-      - name: Stage wrapper
+      - name: Publish wrapper
         working-directory: release/npm/knot
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm stage publish --access public
+        run: |
+          set -eu
+          name="$(node -p "require('./package.json').name")"
+          error_file="$(mktemp)"
+          if npm view "$name" name >/dev/null 2>"$error_file"; then
+            npm stage publish --access public
+          else
+            if ! grep -Eq 'E404|404 Not Found' "$error_file"; then
+              cat "$error_file"
+              rm -f "$error_file"
+              exit 1
+            fi
+            npm publish --access public
+          fi
+          rm -f "$error_file"
 
       - name: Upload release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

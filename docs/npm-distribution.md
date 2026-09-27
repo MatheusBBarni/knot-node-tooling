@@ -301,18 +301,20 @@ That job does not get `id-token`.
 Actions are pinned to commit SHAs.
 `actions/setup-node` uses `package-manager-cache: false`.
 A GitHub environment protects both jobs and requires a maintainer review.
-The checked-in workflow currently supplies `NODE_AUTH_TOKEN` from `NPM_TOKEN` while creating stages.
-That is token-authenticated staged publishing, not evidence that npm OIDC trusted publishing is configured or that provenance will be attached.
+The checked-in workflow currently supplies `NODE_AUTH_TOKEN` from `NPM_TOKEN`.
+That is token-authenticated publishing, not evidence that npm OIDC trusted publishing is configured or that provenance will be attached.
 Before the first publish, configure and exercise the intended authentication mode in npm.
-The preferred mode is OIDC trusted publishing, which removes `NPM_TOKEN` and keeps `id-token: write`; if a stage-only token is retained instead, the release gate must not describe that run as trusted publishing.
-The npm job stages packages with `npm stage publish --access public`.
+The preferred mode is OIDC trusted publishing, which removes `NPM_TOKEN` and keeps `id-token: write`.
+If a token is retained instead, the release gate must not describe that run as trusted publishing.
+Npm rejects `npm stage publish` for a package name that does not already exist.
+The first release therefore bootstraps each absent package with `npm publish --access public`.
+After a package exists, the workflow uses `npm stage publish --access public` for later versions.
+The workflow fails on registry errors other than a package-not-found response.
 `actions/setup-node` sets `registry-url` to `https://registry.npmjs.org`, which makes npm read `NODE_AUTH_TOKEN`.
 That variable is the Actions secret `NPM_TOKEN`.
 The secret value is not written into the repository.
-A maintainer approves the staged set with `npm stage approve` and 2FA.
-Direct `npm publish` stays off the trusted-publisher config.
-npm's post-3 September 2026 trusted-publisher default is staged publish.
-
+A maintainer approves staged versions with `npm stage approve` and 2FA.
+Direct `npm publish` is restricted to the one-time package bootstrap.
 Order inside one release:
 
 1. Build each target on its runner and record the binary SHA-256.
