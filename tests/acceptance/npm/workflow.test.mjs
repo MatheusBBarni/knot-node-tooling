@@ -28,6 +28,7 @@ test("the publish workflow builds both first-release targets and creates a GitHu
   assert.match(text, /libc: "glibc"/);
   assert.match(text, /node scripts\/release-assets\.mjs/);
   assert.match(text, /gh release create/);
+  assert.match(text, /gh release (?:view|upload|create)[\s\S]*--repo "\$GITHUB_REPOSITORY"/);
   assert.match(text, /contents:\s*write/);
   assert.match(text, /actions:\s*read/);
   assert.equal(text.match(/environment:\s*npm-publish/g).length, 2);
