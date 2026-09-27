@@ -9,7 +9,7 @@ const os = require("node:os");
 const path = require("node:path");
 const process = require("node:process");
 
-const SCOPE = "@scope";
+const SCOPE = "@matheusbbarni";
 const MUSL_LOADER = /^ld-musl-.+\.so\.1$/;
 const GLIBC_LOADER = /^ld-linux(?:-.+)?\.so(?:\.\d+)?$/;
 

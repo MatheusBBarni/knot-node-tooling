@@ -76,20 +76,20 @@ test("npm install of the staged tarballs runs the packed knot binary", { timeout
   });
   assert.equal(onePackage.status, 0, `${onePackage.stdout}\n${onePackage.stderr}`);
 
-  const binary = path.join(project, "node_modules/@scope/knot-darwin-arm64/bin/knot");
+  const binary = path.join(project, "node_modules/@matheusbbarni/knot-darwin-arm64/bin/knot");
   replaceByte(binary);
   const tampered = await runProcess(knot, ["--version"], { cwd: project });
   assert.equal(tampered.status, 1);
   assert.equal(tampered.stderr, "knot: binary integrity check failed\n");
   assert.equal(tampered.stdout, "");
 
-  fs.rmSync(path.join(project, "node_modules/@scope/knot-darwin-arm64"), {
+  fs.rmSync(path.join(project, "node_modules/@matheusbbarni/knot-darwin-arm64"), {
     recursive: true,
     force: true,
   });
   const missing = await runProcess(knot, ["--version"], { cwd: project });
   assert.equal(missing.status, 127);
-  assert.match(missing.stderr, /@scope\/knot-darwin-arm64/);
+  assert.match(missing.stderr, /@matheusbbarni\/knot-darwin-arm64/);
   assert.match(missing.stderr, /darwin/);
   assert.match(missing.stderr, /arm64/);
 });

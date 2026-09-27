@@ -6,13 +6,74 @@ on:
       - "v*"
 
 permissions:
-  id-token: write
   contents: read
 
 jobs:
+  build-binaries:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            runner: macos-14
+          - target: linux-x64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Install pinned Bend
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -eu
+          url="$(node -e 'const p=require("./toolchain.json"); process.stdout.write(p.bend.artifacts[process.argv[1]].url)' "$TARGET")"
+          sha="$(node -e 'const p=require("./toolchain.json"); process.stdout.write(p.bend.artifacts[process.argv[1]].sha256)' "$TARGET")"
+          curl -fsSL "$url" -o /tmp/bend.tar.gz
+          printf '%s  %s\n' "$sha" /tmp/bend.tar.gz | shasum -a 256 -c -
+          rm -rf "$HOME/.bend"
+          mkdir -p "$HOME/.bend"
+          tar -xzf /tmp/bend.tar.gz --strip-components=1 -C "$HOME/.bend"
+          echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
+          bend version
+
+      - name: Build knot
+        run: ./scripts/build-knot
+
+      - name: Linux install and integrity gate
+        if: matrix.target == 'linux-x64'
+        env:
+          KNOT: ${{ github.workspace }}/bin/knot
+        run: |
+          node --test \
+            tests/acceptance/package-manager/install-one-package.test.mjs \
+            tests/acceptance/package-manager/install-rejects-wrong-integrity.test.mjs \
+            tests/acceptance/package-manager/install-rejects-missing-integrity.test.mjs
+
+      - name: Upload native binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: knot-binary-${{ matrix.target }}
+          path: dist/knot.bin
+          if-no-files-found: error
+
   publish:
-    runs-on: macos-latest
+    needs: build-binaries
+    runs-on: ubuntu-24.04
     environment: npm-publish
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -24,14 +85,40 @@ jobs:
           registry-url: "https://registry.npmjs.org"
           package-manager-cache: false
 
-      - name: Build knot
-        run: ./scripts/build-knot
+      - name: Download native binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: knot-binary-*
+          path: release/binaries
 
       - name: Stage npm packages
-        run: node scripts/stage-npm.mjs
+        shell: bash
+        run: |
+          set -eu
+          node --input-type=module <<'NODE'
+          import path from "node:path";
+          import { stageNpmRelease } from "./scripts/stage-npm.mjs";
 
-      - name: Collect release assets
-        run: node scripts/release-assets.mjs
+          stageNpmRelease({
+            rootDir: process.cwd(),
+            outDir: "release/npm",
+            targets: [
+              {
+                platform: "darwin",
+                arch: "arm64",
+                libc: null,
+                binaryPath: path.resolve("release/binaries/knot-binary-darwin-arm64/knot.bin"),
+              },
+              {
+                platform: "linux",
+                arch: "x64",
+                libc: "glibc",
+                binaryPath: path.resolve("release/binaries/knot-binary-linux-x64/knot.bin"),
+              },
+            ],
+          });
+          NODE
+          node scripts/release-assets.mjs
 
       - name: Stage platform packages
         shell: bash
@@ -39,7 +126,6 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -eu
-          shopt -s nullglob
           for dir in release/npm/knot-*; do
             (cd "$dir" && npm stage publish --access public)
           done
@@ -59,7 +145,7 @@ jobs:
 
   release:
     needs: publish
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: npm-publish
     permissions:
       actions: read

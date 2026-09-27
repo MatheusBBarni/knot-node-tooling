@@ -28,7 +28,7 @@ function launcherCopy(dir) {
 
 function writeWrapper(dir, bins) {
   writeFile(path.join(dir, "package.json"), JSON.stringify({
-    name: "@scope/knot",
+    name: "@matheusbbarni/knot",
     version: "0.0.0",
     bin: { knot: "bin/knot.js" },
     knot: { bins },
@@ -158,7 +158,7 @@ test("linux loader sets choose musl, glibc, or both paths", async () => {
     KNOT_LIB_DIR: muslDir,
   })).result;
   assert.equal(musl.status, 127, musl.stderr);
-  assert.match(musl.stderr, /@scope\/knot-linux-arm64-musl/);
+  assert.match(musl.stderr, /@matheusbbarni\/knot-linux-arm64-musl/);
   assert.match(musl.stderr, /linux/);
   assert.match(musl.stderr, /arm64/);
   assert.doesNotMatch(musl.stderr, /binary integrity check failed/);
@@ -172,7 +172,7 @@ test("linux loader sets choose musl, glibc, or both paths", async () => {
     KNOT_LIB_DIR: glibcDir,
   })).result;
   assert.equal(glibc.status, 127, glibc.stderr);
-  assert.match(glibc.stderr, /package not found: @scope\/knot-linux-arm64 \(/);
+  assert.match(glibc.stderr, /package not found: @matheusbbarni\/knot-linux-arm64 \(/);
   assert.doesNotMatch(glibc.stderr, /knot-linux-arm64-musl/);
 
   const bothDir = fs.mkdtempSync(path.join(os.tmpdir(), "knot-both-"));
@@ -195,7 +195,7 @@ test("linux loader sets choose musl, glibc, or both paths", async () => {
     KNOT_ARCH: process.arch,
   })).result;
   assert.equal(live.status, 127, live.stderr);
-  assert.match(live.stderr, new RegExp(`package not found: @scope/knot-linux-${process.arch} \\(`));
+  assert.match(live.stderr, new RegExp(`package not found: @matheusbbarni/knot-linux-${process.arch} \\(`));
   assert.doesNotMatch(live.stderr, /-musl/);
 });
 
@@ -234,10 +234,10 @@ for (const name of ["lookup", "resolve", "resolve4", "resolve6"]) {
 
 test("resolves a hoisted platform package and forwards argv, status, and stdio", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "knot-hoist-"));
-  const wrapper = path.join(root, "node_modules/@scope/knot");
+  const wrapper = path.join(root, "node_modules/@matheusbbarni/knot");
   const launcher = launcherCopy(wrapper);
-  const binary = writePlatform(root, "@scope/knot-darwin-arm64", nodeStandin);
-  writeWrapper(wrapper, { "@scope/knot-darwin-arm64": sha256(binary) });
+  const binary = writePlatform(root, "@matheusbbarni/knot-darwin-arm64", nodeStandin);
+  writeWrapper(wrapper, { "@matheusbbarni/knot-darwin-arm64": sha256(binary) });
   const obs = path.join(root, "obs.json");
   const result = await runLauncher(launcher, ["alpha", "beta"], baseEnv({
     KNOT_OBS: obs,
@@ -259,10 +259,10 @@ test("resolves a hoisted platform package and forwards argv, status, and stdio",
 
 test("resolves a platform package nested under the wrapper", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "knot-nest-"));
-  const wrapper = path.join(root, "node_modules/@scope/knot");
+  const wrapper = path.join(root, "node_modules/@matheusbbarni/knot");
   const launcher = launcherCopy(wrapper);
-  const binary = writePlatform(wrapper, "@scope/knot-darwin-arm64", nodeStandin);
-  writeWrapper(wrapper, { "@scope/knot-darwin-arm64": sha256(binary) });
+  const binary = writePlatform(wrapper, "@matheusbbarni/knot-darwin-arm64", nodeStandin);
+  writeWrapper(wrapper, { "@matheusbbarni/knot-darwin-arm64": sha256(binary) });
   const obs = path.join(root, "obs.json");
   const result = await runLauncher(launcher, ["--version"], baseEnv({
     KNOT_OBS: obs,
@@ -278,11 +278,11 @@ test("resolves a platform package nested under the wrapper", async () => {
 
 test("win32 selects bin/knot.exe", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "knot-win-"));
-  const wrapper = path.join(root, "node_modules/@scope/knot");
+  const wrapper = path.join(root, "node_modules/@matheusbbarni/knot");
   const launcher = launcherCopy(wrapper);
-  const binary = writePlatform(root, "@scope/knot-win32-x64", nodeStandin);
+  const binary = writePlatform(root, "@matheusbbarni/knot-win32-x64", nodeStandin);
   assert.equal(path.basename(binary), "knot.exe");
-  writeWrapper(wrapper, { "@scope/knot-win32-x64": sha256(binary) });
+  writeWrapper(wrapper, { "@matheusbbarni/knot-win32-x64": sha256(binary) });
   const obs = path.join(root, "obs.json");
   const result = await runLauncher(launcher, [], baseEnv({
     KNOT_PLATFORM: "win32",
@@ -298,11 +298,11 @@ test("win32 selects bin/knot.exe", async () => {
 
 test("a byte mismatch exits 1 before the binary starts", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "knot-hash-"));
-  const wrapper = path.join(root, "node_modules/@scope/knot");
+  const wrapper = path.join(root, "node_modules/@matheusbbarni/knot");
   const launcher = launcherCopy(wrapper);
   const start = path.join(root, "started");
-  const binary = writePlatform(root, "@scope/knot-darwin-arm64", nodeStandin);
-  writeWrapper(wrapper, { "@scope/knot-darwin-arm64": "0".repeat(64) });
+  const binary = writePlatform(root, "@matheusbbarni/knot-darwin-arm64", nodeStandin);
+  writeWrapper(wrapper, { "@matheusbbarni/knot-darwin-arm64": "0".repeat(64) });
   const result = await runLauncher(launcher, ["--version"], baseEnv({
     KNOT_START: start,
   })).result;
@@ -314,12 +314,12 @@ test("a byte mismatch exits 1 before the binary starts", async () => {
 
 test("a missing platform package exits 127 and names the package and triple", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "knot-miss-"));
-  const wrapper = path.join(root, "node_modules/@scope/knot");
+  const wrapper = path.join(root, "node_modules/@matheusbbarni/knot");
   const launcher = launcherCopy(wrapper);
   writeWrapper(wrapper, {});
   const result = await runLauncher(launcher, ["--version"], baseEnv()).result;
   assert.equal(result.status, 127);
-  assert.match(result.stderr, /@scope\/knot-darwin-arm64/);
+  assert.match(result.stderr, /@matheusbbarni\/knot-darwin-arm64/);
   assert.match(result.stderr, /darwin/);
   assert.match(result.stderr, /arm64/);
 });
@@ -328,14 +328,14 @@ test("SIGINT, SIGTERM, and SIGHUP exit with 128 plus the signal number", async (
   const signals = ["SIGTERM", "SIGINT", "SIGHUP"];
   for (const signal of signals) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "knot-sig-"));
-    const wrapper = path.join(root, "node_modules/@scope/knot");
+    const wrapper = path.join(root, "node_modules/@matheusbbarni/knot");
     const launcher = launcherCopy(wrapper);
     const ready = path.join(root, "ready");
-    const binary = writePlatform(root, "@scope/knot-darwin-arm64", `#!/bin/sh
+    const binary = writePlatform(root, "@matheusbbarni/knot-darwin-arm64", `#!/bin/sh
 printf 'ready\\n' > "$KNOT_READY"
 exec /bin/sleep 30
 `);
-    writeWrapper(wrapper, { "@scope/knot-darwin-arm64": sha256(binary) });
+    writeWrapper(wrapper, { "@matheusbbarni/knot-darwin-arm64": sha256(binary) });
     const { child, result } = runLauncher(launcher, [], baseEnv({
       KNOT_READY: ready,
     }), { detached: true });

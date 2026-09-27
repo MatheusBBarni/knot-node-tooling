@@ -21,20 +21,20 @@ A trademark filing is the only dispute path npm documents, and this project does
 
 The published wrapper is a scoped package.
 Its `bin` field maps the command `knot` to the launcher, which is the mechanism npm documents for installing a command whose name differs from the package name.
-Examples in this document write the scope as `@scope`.
-Before the first publish, register one npm organization and replace `@scope` everywhere.
-Register the organization when the first package is ready to publish.
-npm treats an organization with no packages as squatting.
+Examples in this document use the `@matheusbbarni` npm scope.
+The scope is the npm user or organization that owns the configured publish credentials.
+The configured npm identity must own this scope before the first package is staged.
+If it is an organization, register it when the first package is ready; npm treats an organization with no packages as squatting.
 
 Users install it with npm and then run the command:
 
 ```text
-npm install -g @scope/knot
+npm install -g @matheusbbarni/knot
 knot --version
 ```
 
 A project-local install exposes the same command through `npx knot` and `node_modules/.bin/knot`.
-`npx @scope/knot` also works, because that form names the package.
+`npx @matheusbbarni/knot` also works, because that form names the package.
 
 Another global package can ship a `bin` named `knot`.
 npm points the global `knot` shim at whichever package was installed or updated last.
@@ -68,7 +68,7 @@ This directory is built by the release job and is not the repository root.
 
 ```json
 {
-  "name": "@scope/knot",
+  "name": "@matheusbbarni/knot",
   "version": "0.0.1",
   "description": "Native JavaScript toolchain",
   "license": "Apache-2.0",
@@ -83,13 +83,13 @@ This directory is built by the release job and is not the repository root.
     "node": ">=18"
   },
   "optionalDependencies": {
-    "@scope/knot-darwin-arm64": "0.0.1",
-    "@scope/knot-linux-x64": "0.0.1"
+    "@matheusbbarni/knot-darwin-arm64": "0.0.1",
+    "@matheusbbarni/knot-linux-x64": "0.0.1"
   },
   "knot": {
     "bins": {
-      "@scope/knot-darwin-arm64": "<sha256 of that binary>",
-      "@scope/knot-linux-x64": "<sha256 of that binary>"
+      "@matheusbbarni/knot-darwin-arm64": "<sha256 of that binary>",
+      "@matheusbbarni/knot-linux-x64": "<sha256 of that binary>"
     }
   }
 }
@@ -122,7 +122,7 @@ Staging directory: `release/npm/knot-darwin-arm64/` and one sibling directory pe
 
 ```json
 {
-  "name": "@scope/knot-darwin-arm64",
+  "name": "@matheusbbarni/knot-darwin-arm64",
   "version": "0.0.1",
   "description": "knot binary for darwin-arm64",
   "license": "Apache-2.0",
@@ -139,7 +139,7 @@ Linux glibc:
 
 ```json
 {
-  "name": "@scope/knot-linux-x64",
+  "name": "@matheusbbarni/knot-linux-x64",
   "os": ["linux"],
   "cpu": ["x64"],
   "libc": ["glibc"]
@@ -226,7 +226,7 @@ The current host adapters are part of the runtime contract of that binary:
 | `src/host/http_get_file.c` | `execlp("curl", ...)` for tarball bytes |
 | `src/host/gzip_inflate.c` | `execlp("gzip", ...)` |
 | `src/host/tar_extract.c` | `dlopen` of `/usr/lib/libz.1.dylib` on Apple, `libz.so.1` otherwise |
-| `src/host/hash_sha512_b64.c` | CommonCrypto on Apple. The other branch returns `ENOSYS` |
+| `src/host/hash_sha512_b64.c` | CommonCrypto on Apple. An embedded SHA-512 implementation elsewhere |
 
 `knot --version` does not use those adapters.
 `knot install` does.
@@ -234,10 +234,10 @@ A platform package is publishable when a clean image of that `os` / `cpu` / `lib
 The clean image includes Node, because npm is the installer, plus the host tools that the shipped binary still requires at runtime.
 Today those tools are `curl`, `gzip`, and zlib.
 Apple provides CommonCrypto and `libz` on the OS.
-Linux does not pass the gate while SHA-512 returns `ENOSYS`.
+Linux uses the embedded SHA-512 implementation.
 
-Linking HTTP, inflate, tar, and SHA-512 into the binary removes `curl`, `gzip`, and `libz` from the clean-image list for that target.
-Until that link exists, the published README lists the host tools for the targets that still shell out or `dlopen`.
+The binary still shells out or `dlopen`s for HTTP, gzip, and zlib.
+The published README lists those host tools for targets that need them.
 The launcher does not try to install them.
 
 ## Targets
@@ -248,20 +248,20 @@ A cross-compiled binary waits for a later version that boots it on the real targ
 
 | Package | `os` | `cpu` | `libc` | First tag |
 | --- | --- | --- | --- | --- |
-| `@scope/knot-darwin-arm64` | `darwin` | `arm64` | | Required. This is the current development machine class. |
-| `@scope/knot-linux-x64` | `linux` | `x64` | `glibc` | Required. Blocked on a Linux SHA-512 that finishes the one-package install. |
-| `@scope/knot-darwin-x64` | `darwin` | `x64` | | Same mechanism. Ships when a matching runner passes. |
-| `@scope/knot-linux-arm64` | `linux` | `arm64` | `glibc` | Same mechanism. Ships when a matching runner passes. |
-| `@scope/knot-linux-x64-musl` | `linux` | `x64` | `musl` | Same, plus the musl loader check in the launcher. |
-| `@scope/knot-linux-arm64-musl` | `linux` | `arm64` | `musl` | Same as the other musl package. |
-| `@scope/knot-win32-x64` | `win32` | `x64` | | Later. The host adapters use `fork`, `execlp`, and Unix `dlopen` paths. |
-| `@scope/knot-win32-arm64` | `win32` | `arm64` | | Later, for the same reason. |
+| `@matheusbbarni/knot-darwin-arm64` | `darwin` | `arm64` | | Required. This is the current development machine class. |
+| `@matheusbbarni/knot-linux-x64` | `linux` | `x64` | `glibc` | Required. The release workflow builds and validates this target on Ubuntu. |
+| `@matheusbbarni/knot-darwin-x64` | `darwin` | `x64` | | Same mechanism. Ships when a matching runner passes. |
+| `@matheusbbarni/knot-linux-arm64` | `linux` | `arm64` | `glibc` | Same mechanism. Ships when a matching runner passes. |
+| `@matheusbbarni/knot-linux-x64-musl` | `linux` | `x64` | `musl` | Same, plus the musl loader check in the launcher. |
+| `@matheusbbarni/knot-linux-arm64-musl` | `linux` | `arm64` | `musl` | Same as the other musl package. |
+| `@matheusbbarni/knot-win32-x64` | `win32` | `x64` | | Later. The host adapters use `fork`, `execlp`, and Unix `dlopen` paths. |
+| `@matheusbbarni/knot-win32-arm64` | `win32` | `arm64` | | Later, for the same reason. |
 
 `0.0.1` is not tagged until `darwin-arm64` and `linux-x64` glibc are both in that list and both passed.
 Other rows can be absent from `0.0.1`.
 Their absence is the launcher's exit 127, with the package name it looked for.
-The checked-in workflow currently runs only on `macos-latest`, so it can stage the current `darwin-arm64` host target but cannot satisfy the first-tag gate.
-The Linux x64 glibc target requires a matching runner, a native build, and the clean-image acceptance test before `v0.0.1` can be tagged.
+The checked-in workflow builds both required targets on matching runners, verifies the Linux install and integrity gates, and assembles one wrapper with both platform packages.
+The Linux x64 glibc target uses the pinned Linux Bend artifact and an embedded SHA-512 implementation.
 
 ## Installing Knot with Knot
 
@@ -272,10 +272,10 @@ Knot already skips an optional package whose `os` or `cpu` allow-list does not c
 It does not read `libc`.
 On Linux it would install both the glibc and musl optional packages, because both allow `linux` and `x64`.
 The launcher would still pick one.
-`knot install` of `@scope/knot` is equivalent to `npm install` of the same package after Knot honors `libc` the way npm does, and skips the other Linux package.
+`knot install` of `@matheusbbarni/knot` is equivalent to `npm install` of the same package after Knot honors `libc` the way npm does, and skips the other Linux package.
 
 Knot materializes a package at `node_modules/.knot/<name>` and links optional dependencies through `link_children`, which symlinks `dest/node_modules/<name>`.
-For a scoped name that path contains `@scope/`.
+For a scoped name that path contains `@matheusbbarni/`.
 The Knot-install gate uses a scoped wrapper and a scoped platform package.
 The link step must create the scope directory before creating the symlink.
 

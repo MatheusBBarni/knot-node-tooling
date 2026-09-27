@@ -4,11 +4,14 @@ Date: 2026-09-17
 
 Pinned compiler: Bend 2.0.24 (Apache-2.0)
 
-Artifact (darwin-arm64): `https://github.com/bendlang/bend/releases/download/v2.0.24/bend-2.0.24-darwin-arm64.tar.gz`
+Artifacts:
 
-SHA-256: `b17380ac7b8fce5c5c0250d23c9bb6d99cc9737bfca8a9e5428e051325926e1e`
+| Target | URL | SHA-256 |
+| --- | --- | --- |
+| `darwin-arm64` | `https://github.com/bendlang/bend/releases/download/v2.0.24/bend-2.0.24-darwin-arm64.tar.gz` | `b17380ac7b8fce5c5c0250d23c9bb6d99cc9737bfca8a9e5428e051325926e1e` |
+| `linux-x64` | `https://github.com/bendlang/bend/releases/download/v2.0.24/bend-2.0.24-linux-x64.tar.gz` | `a05c1b5ecab1393f3dd5d67fedbeb83d5dd244c4187c7b36378b6a67a719ac2a` |
 
-Install: download the pinned release asset for your OS/arch, or `curl -fsSL https://bend-lang.com/install.sh | sh` and confirm `bend version` matches `toolchain.json`.
+Install the artifact matching the runner target.
 
 The pin lives in `toolchain.json`.
 Tests set `BEND_NO_TELEMETRY=1` so the launcher does not self-update.

@@ -78,9 +78,9 @@ test("npm pack of the staged wrapper and darwin-arm64 package lists only the rel
 
   assert.equal(fs.readFileSync(launcher, "utf8"), fs.readFileSync(launcherSource, "utf8"));
   assert.equal(fs.readFileSync(launcher, "utf8").startsWith("#!/usr/bin/env node\n"), true);
-  assert.equal(wrapper.name, "@scope/knot");
+  assert.equal(wrapper.name, "@matheusbbarni/knot");
   assert.equal(wrapper.version, "0.0.1");
-  assert.equal(platform.name, "@scope/knot-darwin-arm64");
+  assert.equal(platform.name, "@matheusbbarni/knot-darwin-arm64");
   assert.equal(platform.version, "0.0.1");
   assert.equal(wrapper.description, "Native JavaScript toolchain");
   assert.deepEqual(wrapper.bin, { knot: "bin/knot.js" });
@@ -92,7 +92,7 @@ test("npm pack of the staged wrapper and darwin-arm64 package lists only the rel
   assert.equal(platform.scripts, undefined);
   assert.equal(platform.license, "Apache-2.0");
   assert.deepEqual(wrapper.optionalDependencies, {
-    "@scope/knot-darwin-arm64": "0.0.1",
+    "@matheusbbarni/knot-darwin-arm64": "0.0.1",
   });
   assert.equal(fs.readFileSync(path.join(wrapperDir, "LICENSE"), "utf8"), fs.readFileSync(path.join(repoRoot, "LICENSE"), "utf8"));
   assert.equal(fs.readFileSync(path.join(platformDir, "LICENSE"), "utf8"), fs.readFileSync(path.join(repoRoot, "LICENSE"), "utf8"));
@@ -107,7 +107,7 @@ test("npm pack of the staged wrapper and darwin-arm64 package lists only the rel
   assert.ok(fs.statSync(binary).mode & 0o111);
   assert.ok(fs.statSync(launcher).mode & 0o111);
   const digest = sha256(binary);
-  assert.equal(wrapper.knot.bins["@scope/knot-darwin-arm64"], digest);
+  assert.equal(wrapper.knot.bins["@matheusbbarni/knot-darwin-arm64"], digest);
   assert.match(digest, /^[0-9a-f]{64}$/);
 
   const readme = fs.readFileSync(path.join(wrapperDir, "README.md"), "utf8");
@@ -138,6 +138,34 @@ test("npm pack of the staged wrapper and darwin-arm64 package lists only the rel
   const packedBin = packed.files.find((file) => file.path === "bin/knot");
   assert.ok(packedBin.mode & 0o111, JSON.stringify(packedBin));
   assertPackedFiles(platformFiles);
+});
+test("explicit first-release targets stage Darwin and Linux packages", () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "knot-multi-stage-"));
+  const binaryPath = path.join(repoRoot, "dist", "knot.bin");
+  stageNpmRelease({
+    rootDir: repoRoot,
+    outDir,
+    targets: [
+      { platform: "darwin", arch: "arm64", libc: null, binaryPath },
+      { platform: "linux", arch: "x64", libc: "glibc", binaryPath },
+    ],
+  });
+  assert.deepEqual(fs.readdirSync(outDir).sort(), [
+    "knot",
+    "knot-darwin-arm64",
+    "knot-linux-x64",
+  ]);
+  const wrapper = readJson(path.join(outDir, "knot", "package.json"));
+  assert.deepEqual(wrapper.optionalDependencies, {
+    "@matheusbbarni/knot-darwin-arm64": "0.0.1",
+    "@matheusbbarni/knot-linux-x64": "0.0.1",
+  });
+  assert.equal(wrapper.knot.bins["@matheusbbarni/knot-darwin-arm64"], wrapper.knot.bins["@matheusbbarni/knot-linux-x64"]);
+  const linux = readJson(path.join(outDir, "knot-linux-x64", "package.json"));
+  assert.deepEqual(linux.os, ["linux"]);
+  assert.deepEqual(linux.cpu, ["x64"]);
+  assert.deepEqual(linux.libc, ["glibc"]);
+  assert.equal(fs.existsSync(path.join(outDir, "knot-linux-x64", "LICENSE")), true);
 });
 
 function assertPackedFiles(files) {

@@ -1,4 +1,4 @@
-# @scope/knot
+# @matheusbbarni/knot
 
 This package installs the `knot` command.
 
