@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./assets/knot-logo.png" alt="Knot node tooling logo" height="96" />
+<img src="./assets/knot-icon.png" alt="Knot icon" height="96" />
 
 # Knot
 
