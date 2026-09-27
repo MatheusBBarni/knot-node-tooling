@@ -1,0 +1,77 @@
+name: website
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install pinned Bend
+        shell: bash
+        env:
+          TARGET: linux-x64
+        run: |
+          set -eu
+          url="$(node -e 'const p=require("./toolchain.json"); process.stdout.write(p.bend.artifacts[process.argv[1]].url)' "$TARGET")"
+          sha="$(node -e 'const p=require("./toolchain.json"); process.stdout.write(p.bend.artifacts[process.argv[1]].sha256)' "$TARGET")"
+          curl -fsSL "$url" -o /tmp/bend.tar.gz
+          printf '%s  %s\n' "$sha" /tmp/bend.tar.gz | shasum -a 256 -c -
+          rm -rf "$HOME/.bend"
+          mkdir -p "$HOME/.bend"
+          tar -xzf /tmp/bend.tar.gz --strip-components=1 -C "$HOME/.bend"
+          echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.bend/bin:$PATH"
+          bend version
+
+      - name: Build Knot
+        run: ./scripts/build-knot
+
+      - name: Install website dependencies with Knot
+        working-directory: website
+        env:
+          HOME: ${{ runner.temp }}/knot-home
+        run: |
+          set -eu
+          mkdir -p .knot
+          printf '%s\n' "$HOME/.knot" > .knot/store-dir
+          ../bin/knot install --offline
+
+      - name: Build website
+        working-directory: website
+        run: node node_modules/astro/astro.js build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: website/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,6 +1,7 @@
 # Knot vs npm install
 
 Date: 2026-09-23
+The latest combined four-tool result is in [all-comparison.md](./all-comparison.md).
 
 This is a cached rematerialize comparison, not a resolver or download comparison.
 

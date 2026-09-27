@@ -1,0 +1,13 @@
+{
+  "name": "knot-website",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node node_modules/astro/astro.js dev",
+    "build": "node node_modules/astro/astro.js build",
+    "preview": "node node_modules/astro/astro.js preview"
+  },
+  "dependencies": {
+    "astro": "^5.14.1"
+  }
+}
