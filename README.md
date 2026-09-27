@@ -1,30 +1,38 @@
 <div align="center">
 
+<img src="./assets/knot-logo.png" alt="Knot node tooling logo" height="96" />
+
 # Knot
 
-**A native JavaScript toolchain built in Bend2.**
+**Modern tooling for a connected Node.js workflow.**
 
-[Overview](#overview) · [Commands](#commands) · [Architecture](#architecture) · [Roadmap](#roadmap) · [Design documents](#design-documents)
+[Website](https://matheusbbarni.github.io/knot-node-tooling/) · [Commands](#commands) · [Architecture](#architecture) · [Roadmap](#roadmap) · [Design documents](#design-documents)
 
 </div>
 
-Knot is a native JavaScript toolchain written in Bend2.
-The package manager runs from this repository.
-The compiler can transpile a TypeScript subset, scan runtime imports and exports, and run `build --no-bundle`.
-The native coordinator uses an external JavaScript runtime only when generated code or tests need to execute.
+Knot is a native JavaScript toolchain written in [Bend2](https://github.com/bendlang/bend).
+It brings package management, TypeScript transformation, bundling, and testing under one CLI without embedding a JavaScript runtime.
+
+<details>
+<summary>View the Knot visual identity</summary>
+
+<p align="center">
+  <img src="./assets/visual-identity.png" alt="Knot visual identity board" width="960" />
+</p>
+
+</details>
 
 > [!IMPORTANT]
-> There is no installable release yet.
+> Knot is still a source-based preview and has no installable public release.
 > Build `bin/knot` from this repository with `./scripts/build-knot`.
-> `knot install`, `knot transpile`, `knot scan`, `knot analyze`, and a first `knot build` path (including `--watch`) run today.
-> The test runner is still design-only.
-> Transpilation does not type-check and does not emit `.d.ts` files.
-> The Bend2 pin is [`toolchain.json`](./toolchain.json) (Bend 2.0.24).
-> Host-effect notes are in [Bend2 capability](./docs/bend2-capability.md).
+> Package management, TypeScript transformation, graph analysis, and an initial JavaScript build path run in this tree.
+> The test runner is still planned.
+> Transpilation does not type-check or emit `.d.ts` files.
+> The pinned toolchain is Bend 2.0.24 in [`toolchain.json`](./toolchain.json).
 
 ## Overview
 
-Knot aims to provide one small command for the common JavaScript workflow:
+Knot aims to make the common Node.js workflow one coherent toolchain:
 
 ```text
 knot install
@@ -32,16 +40,15 @@ knot build
 knot test
 ```
 
-The project is split into four connected systems:
+The project is organized around four connected systems:
 
-- An npm-compatible package manager with verified downloads, a `knot.lock` file, an isolated `node_modules` layout, and a global store under `~/.knot`.
-- A JavaScript and TypeScript compiler for syntax transformation, JSX lowering, module resolution, source maps, and incremental rebuilds.
-- A production bundler for JavaScript, CSS, HTML, and static assets.
-- A Jest-style test runner coordinated by a native process and executed in isolated Node.js workers.
+- **Package manager:** npm-compatible registries, verified downloads, deterministic `knot.lock` files, an isolated `node_modules` layout, and a content-addressed store.
+- **Compiler:** JavaScript and TypeScript transformation, JSX lowering, module scanning, resolution, source maps, and incremental rebuilds.
+- **Bundler:** JavaScript graph linking, tree shaking, code splitting, CSS, HTML, static assets, manifests, and atomic publication.
+- **Test runner:** Native coordination with isolated Node.js workers, assertions, snapshots, coverage, reports, and watch selection.
 
-Knot does not embed V8, JavaScriptCore, Node.js, or another JavaScript runtime.
-Builds produce code for browsers and Node.js.
-Tests run through an external Node.js installation.
+Knot generates code for Node.js and browsers.
+Execution remains with those external runtimes.
 
 ## Design goals
 
@@ -51,88 +58,129 @@ Tests run through an external Node.js installation.
 - Strict package visibility that prevents undeclared dependencies by default.
 - Atomic activation of complete install and build generations.
 - Full functionality on CPU-only systems.
-- Multicore and GPU execution only where measurements show a real end-to-end gain.
+- Optional multicore and GPU execution only where measurements show an end-to-end gain.
 
 ## Commands
 
-`knot install`, `knot add`, `knot remove`, `knot fetch`, `knot why`, `knot transpile`, `knot scan`, `knot analyze`, and `knot build` (including `--no-bundle` and `--watch`) run in this tree.
-The test runner is still a product plan.
+The following commands currently run from this source tree.
+The test runner remains planned.
 
 | Command | Status | Purpose |
 | --- | --- | --- |
-| `knot install` | works in this repo | Resolve, fetch, verify, and materialize project dependencies |
-| `knot add <spec>` | works in this repo | Add and install a direct dependency |
-| `knot remove <name>` | works in this repo | Remove a direct dependency |
-| `knot fetch` | works in this repo | Populate the package store without creating project links |
-| `knot why <name>` | works in this repo | Explain why a package exists in the graph |
-| `knot update [name]` | planned | Update dependencies within declared ranges |
-| `knot transpile <files...>` | works for a TypeScript subset | Strip types and emit JavaScript plus a source map next to each file |
-| `knot scan <files...>` | works for a TypeScript subset | Print runtime imports and exports as JSON |
-| `knot analyze <entrypoints...>` | works for a TypeScript subset | Walk the import graph and print entries/modules/missing as JSON |
-| `knot build --no-bundle <files...>` | works for a TypeScript subset | Same no-bundle transform as `transpile` |
-| `knot build <entrypoints...>` | works for a JavaScript/TypeScript subset | Resolve, tree-shake, and emit application outputs (see flags below) |
-| `knot test [filters...]` | planned | Discover, compile, isolate, and execute tests |
+| `knot install` | Available | Resolve, fetch, verify, and materialize project dependencies |
+| `knot add <spec>` | Available | Add and install a direct dependency |
+| `knot remove <name>` | Available | Remove a direct dependency |
+| `knot fetch` | Available | Populate the package store without creating project links |
+| `knot why <name>` | Available | Explain why a package exists in the dependency graph |
+| `knot update [name]` | Available | Update dependencies within declared ranges |
+| `knot transpile <files...>` | Available for a TypeScript subset | Emit JavaScript and a source map next to each input |
+| `knot scan <files...>` | Available for a TypeScript subset | Print runtime imports and exports as JSON |
+| `knot analyze <entrypoints...>` | Available for a TypeScript subset | Print reachable entries, modules, and missing imports as JSON |
+| `knot build --no-bundle <files...>` | Available for a TypeScript subset | Transform files without linking them into a bundle |
+| `knot build <entrypoints...>` | Available for a JavaScript/TypeScript subset | Resolve, tree-shake, and emit application outputs |
+| `knot test [filters...]` | Planned | Discover, compile, isolate, and execute tests |
 
-> [!NOTE]
-> Older PRDs still say `bnpm`.
-> The CLI name is `knot`.
-> Config is `knot.toml`, the lockfile is `knot.lock`, the project store is `node_modules/.knot`, and the future test API is `knot:test`.
+Older PRDs use the working name `bnpm`.
+The public names are `knot`, `knot.toml`, `knot.lock`, `node_modules/.knot`, and `knot:test`.
+
+## Build from source
+
+### Prerequisites
+
+- Node.js 24 LTS.
+- Bend 2.0.24 installed from the verified pin in [`toolchain.json`](./toolchain.json).
+- A native C compiler supported by Bend2.
+- On the current macOS development setup, the build wrapper uses Homebrew LLVM and LLD through [`scripts/cc`](./scripts/cc).
+
+The capability gate documents the pinned artifacts, host effects, backend behavior, and acceptance requirements in [`docs/bend2-capability.md`](./docs/bend2-capability.md).
+
+### Build and test
+
+```sh
+./scripts/build-knot
+./bin/knot --help
+node --test
+```
+
+`node --test` is the independent acceptance driver.
+It launches the real `knot` process and checks observable files, output, network requests, child processes, generated JavaScript, and recovery behavior where applicable.
+
+Run the compiler examples after building:
+
+```sh
+./bin/knot transpile examples/compiler/basic/greet.ts
+node examples/compiler/basic/greet.js
+./bin/knot analyze examples/compiler/analyze-graph/main.ts
+```
+
+See [`examples/compiler/README.md`](./examples/compiler/README.md) for JSX, runtime TypeScript, and source-map examples.
 
 ## Package management
 
-`knot install` talks to npm-compatible registries, writes `knot.lock`, and materializes packages under `node_modules/.knot` with root symlinks in `node_modules`.
-Verified tarballs live in `~/.knot/cas`.
-Extracted trees live in `~/.knot/unpacked`.
-Registry metadata lives in `~/.knot/cache`.
-`--store-dir` overrides the store root.
+`knot install` uses npm-compatible registries and writes `knot.lock`.
+Verified tarballs are stored in `~/.knot/cas`.
+Extracted package trees are stored in `~/.knot/unpacked`.
+Registry metadata is stored in `~/.knot/cache`.
+Use `--store-dir` to select another store root.
 
-A later `knot install` after `rm -rf node_modules` clonefiles from the unpacked store and relinks.
-Lifecycle scripts stay off unless the project opts in.
+The project layout places materialized packages under `node_modules/.knot` and exposes declared dependencies through links in `node_modules`.
+A later install can rematerialize packages from the unpacked store after `node_modules` is removed.
+Lifecycle scripts remain disabled unless explicitly approved by the project.
 
-Cached rematerialize times against bun, npm, and pnpm are in [`benchmark/package-manager/`](./benchmark/package-manager/).
-On the spec-finder fixture, Knot and bun are now effectively tied on default backends after the 2026-09-26 parallel rematerialization pass.
-Knot measured 24.71 ms median versus bun at 25.35 ms, while remaining faster than npm 11 and pnpm 11 on that machine and method.
-The notes in those files list versions, the mismatched lock graphs, and what was not measured.
+The package manager is designed around these safety boundaries:
+
+- Verify integrity before package content becomes visible.
+- The implementation must reject archive traversal, absolute paths, symlink escapes, special files, excessive entries, and declared-size abuse before materialization.
+- Keep cache writes and project activation atomic.
+- Support offline and frozen installs without implicit network access.
+- Fail explicitly instead of falling back to npm, pnpm, Bun, or another tool.
+
+Benchmark methodology and limitations are recorded in [`benchmark/package-manager/`](./benchmark/package-manager/).
+Those measurements compare cached rematerialization on a specific fixture, not cold installs or identical lock graphs.
 
 ## Compilation and bundling
-`knot transpile` and `knot build --no-bundle` strip type annotations and lower JSX/TSX (classic `React.createElement` by default; `--jsx-runtime automatic|preserve` and `--jsx-factory` / `--jsx-fragment` / `--jsx-import-source`), `interface` and `type` declarations, `import type`, and `as` assertions, and lower numeric `enum` declarations, value `namespace`s, constructor parameter properties, and `satisfies` expressions.
-`--sourcemap linked|external|none` controls map emit (default `linked`).
-`--minify-whitespace` inserts spaces only between identifiers and numbers.
-`--minify-identifiers` keeps exported function names and shortens other identifiers.
-`knot build <entry> --outfile out.js` follows relative `./` imports, `require("./file.ts")`, `tsconfig.json` `compilerOptions.paths` aliases including `@app/*` wildcards, and bare specifiers via `package.json` `exports` or `main` (honoring `--conditions` and `sideEffects`), then `index.js`/`index.ts`, drops unused `function` declarations from non-entry modules, writes a content-hashed `.js` chunk for `import("./file.ts")`, writes `require()` targets next to the bundle as `.js`, and can write a JSON `--metafile`.
-Successful emits write `.knot/build-cache/v1` and the source used for the last emit. A later `build --no-bundle` of unchanged source reuses that record and does not rewrite JavaScript.
-`knot clean --build-cache` deletes `.knot/build-cache/v1` and leaves JavaScript output in place.
-`knot build --watch --no-bundle <file.ts>` rebuilds that file when its contents change.
-`knot build --watch <entry.ts> --outfile out.js` rebuilds the bundle when any file in the import graph changes or a new file appears in the entry directory.
-`knot analyze <entry.ts>` prints the reachable import graph as JSON.
-Unsupported syntax must fail with `syntax_error` and must not write JavaScript.
 
-Known transpile limits in this tree:
-- `import fs = require("x")` lowers to a default ESM import (`import fs from "x"`), not `import * as fs`, because the type eraser also strips the `as` keyword.
-- CSS, HTML, and static-asset bundling are still ahead.
+`knot transpile` and `knot build --no-bundle` currently support a practical JavaScript and TypeScript subset.
+They erase type annotations, interfaces, type aliases, `import type`, `as` assertions, and `satisfies` expressions.
+They also lower JSX, numeric enums, value namespaces, constructor parameter properties, and import assignments covered by the current fixtures.
 
-It will support broader browser and Node.js targets, ESM and CommonJS output, richer tree shaking, code splitting, CSS, HTML, and static assets.
+The compiler supports classic, automatic, and preserved JSX modes.
+It emits linked, external, or disabled source maps.
+Identifier and whitespace minification are available for supported inputs.
 
-Builds will not access the network or install missing packages implicitly.
-A failed build will not expose a mixture of old and new artifacts.
+The current JavaScript build path can:
+
+- Follow relative imports, `require()` targets, `tsconfig.json` path aliases, and package `exports` or `main` entries.
+- Honor build conditions and `sideEffects` metadata.
+- Build reachable graphs and remove unused function declarations from non-entry modules.
+- Emit content-hashed dynamic-import chunks and CommonJS `require()` targets.
+- Write JSON build metadata with `--metafile`.
+- Reuse unchanged outputs through `.knot/build-cache/v1`.
+- Rebuild affected inputs with `--watch`.
+
+CSS, HTML, and static-asset bundling remain in progress.
+Unsupported syntax fails explicitly with `syntax_error` and does not write JavaScript.
+
+Builds do not install packages or access the network implicitly.
+A failed build must not expose a mixture of old and new artifacts.
 
 ## Test runner
 
-`knot test` will use a native Bend2 coordinator and external Node.js worker processes.
-One process per test file is the default isolation boundary.
+`knot test` is planned as a native Bend2 coordinator with external Node.js worker processes.
+The default isolation boundary will be one process per test file.
 
 The planned runner includes:
 
 - JavaScript, TypeScript, JSX, TSX, ESM, and CommonJS tests.
 - Nested suites, hooks, assertions, mocks, spies, fake time, and snapshots.
 - File-level parallelism, deterministic sharding, retries, and seeded randomization.
-- Hard deadlines and process-tree cleanup.
+- Hard deadlines and complete process-tree cleanup.
 - Source-mapped V8 coverage.
 - Console, dots, JUnit XML, GitHub Actions, and JSON Lines reporters.
 - Dependency-aware watch selection.
 
 Tests are trusted project code, not sandboxed workloads.
-The native coordinator remains responsible for deadlines, cleanup, event validation, and the final process status.
+The native coordinator remains responsible for deadlines, cleanup, event validation, and final process status.
 
 ## Architecture
 
@@ -163,60 +211,52 @@ package.json + knot.toml + knot.lock
 ```
 
 Filesystem, network, process, signal, and terminal work stays at explicit effect boundaries.
-Pure graph, parsing, hashing, validation, and planning work can use Bend2 parallel execution.
+Parsing, graph planning, canonicalization, hashing, validation, reachability, and serialization remain pure or bounded where practical.
 Every required feature keeps a CPU path.
 
 ## Development model
 
-Knot uses test-driven development for every behavioral change.
-Each cycle covers one observable behavior through an agreed public seam:
+Knot uses test-driven development for behavioral changes:
 
-1. Write one failing acceptance test.
+1. Write one failing acceptance test at a public seam.
 2. Confirm that it fails because the behavior is missing.
-3. Implement the smallest working path.
+3. Implement the smallest complete path.
 4. Exercise the real executable, generated output, or browser surface.
-5. Refactor while the focused and related checks remain green.
+5. Refactor while focused and related checks remain green.
 
-Node.js 24 LTS and `node:test` are the independent acceptance driver.
-The driver will launch the real `knot` process, create temporary projects, host local registries, execute generated JavaScript, and inspect observable results.
-Bend2 laws and proofs supplement these tests for pure invariants.
+Bend2 laws and proofs supplement executable tests for pure invariants.
+They do not replace runtime tests for filesystems, networks, processes, JavaScript behavior, crashes, or browsers.
 
-## Development
+## Website
 
-Use Node.js 24 LTS (`package.json` `engines.node` and `toolchain.json`).
-Install Bend 2.0.24 from the pin in `toolchain.json` (`bend version`).
-Native builds need `CC` set to `scripts/cc` on this Mac.
+The project website is a static Astro site published to GitHub Pages.
+Run it locally with:
 
-```text
-./scripts/build-knot
-node --test
+```sh
+cd website
+pnpm install --frozen-lockfile
+pnpm dev
 ```
 
-Do not use `bun test` as the acceptance driver.
-Bun reports a different `process.versions.node`, does not satisfy the Node 24 gate, and breaks nested `node --test` spawns (`process.execPath` is Bun).
+Build the static site with `pnpm build`.
 
 ## Roadmap
 
-1. Pin Bend 2.0.24 and prove check, proof, and CPU compile on the JS and native paths.
-2. Deliver a deterministic npm-compatible resolver, verified store, isolated linker, and secure package lifecycle.
-3. Deliver JavaScript and TypeScript parsing, transpilation, module resolution, source maps, and incremental compilation.
-4. Deliver JavaScript linking, tree shaking, code splitting, CSS, HTML, assets, and atomic production output.
+1. Keep the pinned Bend2 toolchain and CPU acceptance gate reproducible.
+2. Expand the npm-compatible resolver, verified store, isolated linker, and lifecycle policy.
+3. Expand JavaScript and TypeScript parsing, transforms, resolution, source maps, and incremental compilation.
+4. Complete JavaScript linking, tree shaking, code splitting, CSS, HTML, assets, and atomic production output.
 5. Deliver the isolated Node.js test runner, assertions, reporting, snapshots, coverage, and watch mode.
-6. Tune multicore execution and enable GPU stages only when equivalent output and end-to-end gains are demonstrated.
+6. Enable multicore and GPU stages only when equivalent output and end-to-end gains are demonstrated.
 
 ## Product boundaries
 
-The initial product does not include:
-
-- A JavaScript runtime or REPL.
-- Static TypeScript type checking or declaration generation.
-- A development server or hot module replacement.
-- Arbitrary JavaScript plugins inside the native process.
-- Implicit network access during builds.
-- Package lifecycle scripts enabled by default.
-- A GPU requirement.
-
-Unsupported behavior must fail with a clear diagnostic rather than silently falling back to another tool.
+Knot does not embed a JavaScript runtime.
+It does not provide static TypeScript type checking or declaration generation.
+It does not install packages or access the network during builds.
+Package lifecycle scripts are not enabled by default.
+GPU hardware is optional.
+Unsupported behavior fails with a diagnostic instead of silently falling back to another tool.
 
 ## Design documents
 
@@ -229,10 +269,10 @@ Unsupported behavior must fail with a clear diagnostic rather than silently fall
 | [TDD plan](./tdd-plan.md) | Public test seams, red-green-refactor workflow, fixtures, CI levels, and initial vertical slices |
 | [Bend2 capability](./docs/bend2-capability.md) | Pinned toolchain, commands, effects, and host adapters |
 | [npm distribution](./docs/npm-distribution.md) | Scoped npm packages, platform binaries, and the release gate for publishing `knot` |
-| [Knot vs bun](./benchmark/package-manager/knot-bun-comparison.md) | Cached `install` after deleting `node_modules` |
-| [Knot vs npm](./benchmark/package-manager/knot-npm-comparison.md) | Same method against npm 11 |
-| [Knot vs pnpm](./benchmark/package-manager/knot-pnpm-comparison.md) | Same method against pnpm 11 |
+| [Knot vs Bun](./benchmark/package-manager/knot-bun-comparison.md) | Cached install rematerialization against Bun |
+| [Knot vs npm](./benchmark/package-manager/knot-npm-comparison.md) | Cached install rematerialization against npm 11 |
+| [Knot vs pnpm](./benchmark/package-manager/knot-pnpm-comparison.md) | Cached install rematerialization against pnpm 11 |
 
 The dedicated PRD for a subsystem is authoritative when documents overlap.
 The bundler PRD owns graph, linker, chunk, CSS, HTML, asset, and output behavior.
-The TDD plan owns the verification process.
+The TDD plan owns verification process and regression levels.
