@@ -5,7 +5,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#ifdef __APPLE__
 #include <sys/clonefile.h>
+#endif
 #include <sys/stat.h>
 
 static int fs_clone_dir_mkdir_p(char* path) {
@@ -243,10 +245,17 @@ static int knot_tree_hardlink(const char* src, const char* dst) {
 }
 
 static int knot_try_clone(const char* src, const char* dst) {
+#ifdef __APPLE__
   if (clonefile(src, dst, 0) == 0 || errno == EEXIST) {
     return 0;
   }
   return -1;
+#else
+  (void)src;
+  (void)dst;
+  errno = ENOTSUP;
+  return -1;
+#endif
 }
 
 int knot_materialize_dir(const char* src, const char* dst) {
