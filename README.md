@@ -11,7 +11,7 @@
 </div>
 
 Knot is a native JavaScript toolchain written in [Bend2](https://github.com/bendlang/bend).
-It brings package management, TypeScript transformation, bundling, and testing under one CLI without embedding a JavaScript runtime.
+It brings package management, TypeScript transformation, bundling, and testing under one CLI without bundling V8 or another general-purpose JavaScript runtime into the toolchain.
 
 <details>
 <summary>View the Knot visual identity</summary>
@@ -23,8 +23,8 @@ It brings package management, TypeScript transformation, bundling, and testing u
 </details>
 
 > [!IMPORTANT]
-> Knot is still a source-based preview and has no installable public release.
-> Build `bin/knot` from this repository with `./scripts/build-knot`.
+> Knot 0.0.1 is published as [`@matheusbbarni/knot`](https://www.npmjs.com/package/@matheusbbarni/knot).
+> Build `bin/knot` from this repository with `./scripts/build-knot` when you need the latest source changes.
 > Package management, TypeScript transformation, graph analysis, and an initial JavaScript build path run in this tree.
 > The test runner is still planned.
 > Transpilation does not type-check or emit `.d.ts` files.
@@ -72,16 +72,27 @@ The test runner remains planned.
 | `knot remove <name>` | Available | Remove a direct dependency |
 | `knot fetch` | Available | Populate the package store without creating project links |
 | `knot why <name>` | Available | Explain why a package exists in the dependency graph |
-| `knot update [name]` | Available | Update dependencies within declared ranges |
-| `knot transpile <files...>` | Available for a TypeScript subset | Emit JavaScript and a source map next to each input |
+| `knot run <script>` | Available | Execute a `package.json` script with the declared Node.js engine |
 | `knot scan <files...>` | Available for a TypeScript subset | Print runtime imports and exports as JSON |
 | `knot analyze <entrypoints...>` | Available for a TypeScript subset | Print reachable entries, modules, and missing imports as JSON |
 | `knot build --no-bundle <files...>` | Available for a TypeScript subset | Transform files without linking them into a bundle |
 | `knot build <entrypoints...>` | Available for a JavaScript/TypeScript subset | Resolve, tree-shake, and emit application outputs |
 | `knot test [filters...]` | Planned | Discover, compile, isolate, and execute tests |
 
+`knot run <script>` reads the named entry from `package.json` scripts, validates `engines.node` against the current Node.js runtime, and executes the command without a shell.
+
 Older PRDs use the working name `bnpm`.
 The public names are `knot`, `knot.toml`, `knot.lock`, `node_modules/.knot`, and `knot:test`.
+
+## Install
+
+Install the published CLI globally with any supported package manager:
+
+```sh
+npm install --global @matheusbbarni/knot
+bun add --global @matheusbbarni/knot
+pnpm add --global @matheusbbarni/knot
+```
 
 ## Build from source
 
@@ -158,8 +169,8 @@ The current JavaScript build path can:
 - Reuse unchanged outputs through `.knot/build-cache/v1`.
 - Rebuild affected inputs with `--watch`.
 
-CSS, HTML, and static-asset bundling remain in progress.
-Unsupported syntax fails explicitly with `syntax_error` and does not write JavaScript.
+Basic CSS extraction, HTML module-entry rewriting, JSON/text modules, and static-asset copying are available in the current bundler slice.
+Full CSS transforms, standards-aware HTML reference rewriting, and production asset naming remain in progress.
 
 Builds do not install packages or access the network implicitly.
 A failed build must not expose a mixture of old and new artifacts.
