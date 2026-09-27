@@ -1,6 +1,6 @@
 # Knot vs bun install
 
-Date: 2026-09-23
+Date: 2026-09-26
 
 This is a cached rematerialize comparison, not a resolver or download comparison.
 
@@ -25,20 +25,20 @@ Do not treat the times as same-graph.
 - Host: Darwin 25.6.0, arm64
 - CPU: Apple M5
 - Disk: APFS
-- Knot binary: `bin/knot` from commit `04afe15`, `--version` prints `0.0.0`
+- Knot binary: `bin/knot` from the working tree after the parallel rematerialization change, `--version` prints `0.0.0`
 - bun: 1.4.2
 - Node used only to launch the timer: v26.8.1
 
 ## Method
 
-Workdir: `/tmp/knot-bench-spec-finder-p0` (copy of `package.json` plus each tool's lockfile).
+Workdir: separate temporary directories containing a copy of `package.json` plus each tool's lockfile.
 
 Caches were already warm (`~/.knot` for Knot, bun's install cache for bun).
 
 Sequence for each tool:
 
 1. Untimed `rm -rf node_modules` and one `install` (warmup, discarded).
-2. Five timed runs of `rm -rf node_modules` then `install`.
+2. Eleven timed runs of `rm -rf node_modules` then `install`.
 3. One extra `install` with `node_modules` already present (no-op).
 
 Times are process wall from spawn to exit, measured with Python `time.perf_counter`.
@@ -53,7 +53,6 @@ rm -rf node_modules
 ```
 
 Default Knot and bun use no extra flags.
-Additional Knot rows use `--reporter silent` and/or `--backend hardlink`.
 
 ## Results
 
@@ -61,35 +60,31 @@ Cached install after deleting `node_modules`:
 
 | Tool | Packages linked | min | median | mean | max | no-op |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| bun 1.4.2 | 29 | 28.2 ms | 29.7 ms | 30.7 ms | 33.6 ms | 10.2 ms |
-| knot default (`04afe15`) | 31 | 42.2 ms | 42.8 ms | 43.4 ms | 45.4 ms | 9.9 ms |
-| knot `--reporter silent` | 31 | 42.9 ms | 43.3 ms | 43.4 ms | 44.2 ms | 10.3 ms |
-| knot `--backend hardlink` | 31 | 544.3 ms | 554.0 ms | 552.8 ms | 559.8 ms | 10.4 ms |
-| knot silent + hardlink | 31 | 555.8 ms | 558.5 ms | 560.8 ms | 566.7 ms | 12.6 ms |
+| bun 1.4.2 | 29 | 22.14 ms | 25.35 ms | 25.16 ms | 28.24 ms | 9.20 ms |
+| knot default | 31 | 24.37 ms | 24.71 ms | 24.80 ms | 25.91 ms | 7.56 ms |
 
-Raw bun runs: 29.65, 28.18, 33.20, 33.56, 28.75 ms.
+Raw bun runs: 25.35, 24.19, 26.58, 23.07, 22.14, 27.39, 27.40, 22.83, 26.83, 28.24, 22.74 ms.
 
-Raw Knot default runs: 42.68, 42.81, 42.22, 45.40, 43.93 ms.
+Raw Knot runs: 24.86, 24.57, 24.93, 24.90, 24.37, 24.47, 24.76, 24.70, 25.91, 24.63, 24.71 ms.
 
-Raw Knot silent runs: 42.96, 43.79, 43.26, 42.93, 44.19 ms.
-
-Raw Knot hardlink runs: 554.01, 550.64, 544.30, 559.81, 555.14 ms.
-
-On this fixture bun is still faster on the default backends.
-Median process wall is about 1.4x (42.8 ms vs 29.7 ms), down from about 1.9x on 2026-09-21 (49.2 ms vs 26.5 ms).
+Knot's median is 0.64 ms, or about 2.5%, below bun's median in this run.
+That difference is small enough to call the tools effectively tied on this fixture.
+Knot linked two more packages, but the lock graphs differ, so this is not a same-work comparison.
+Before package materialization was parallelized, the same investigation measured Knot at 36.83 ms median and bun at 28.72 ms median over seven runs.
+The optimization reduced Knot's measured median by about 33%.
 
 ## Notes
 
-`--reporter silent` removes per-package `+ name@version` lines on the native offline path.
-On this fixture that did not move median wall time meaningfully versus default.
+The locked-install host adapter parses the lockfile once, rematerializes independent packages across at most eight worker threads, then emits progress in lockfile order.
+The bounded worker count avoids serial `clonefile` and package-layout work without making terminal output nondeterministic.
 
-`--backend hardlink` does create hardlinks (`nlink > 1` on materialized files).
+`--backend hardlink` creates hardlinks (`nlink > 1` on materialized files).
 On APFS, recursive per-file hardlink is much slower than directory `clonefile`, which remains the default / `auto` / `clone` path.
-Prefer `clone` or `auto` on macOS; use `hardlink` where CoW clone is unavailable (typical Linux installs).
+Prefer `clone` or `auto` on macOS; use `hardlink` where CoW clone is unavailable, which includes typical Linux installs.
 
-Knot clonefiles (by default) unpacked trees from `~/.knot/unpacked` into `node_modules/.knot` and writes isolated symlinks.
+Knot clonefiles unpacked trees from `~/.knot/unpacked` into `node_modules/.knot` and writes isolated symlinks.
 Bun uses its own store and linker.
-The layouts are not the same, so a faster time is not proof of a better install.
+The layouts are not the same, so a faster time is not proof of a better installer overall.
 
 ## Not measured
 

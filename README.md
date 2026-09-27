@@ -90,8 +90,8 @@ A later `knot install` after `rm -rf node_modules` clonefiles from the unpacked 
 Lifecycle scripts stay off unless the project opts in.
 
 Cached rematerialize times against bun, npm, and pnpm are in [`benchmark/package-manager/`](./benchmark/package-manager/).
-On the spec-finder fixture, bun is still faster on default backends (~1.4x median wall after the 2026-09-23 rematerialize pass).
-Knot is faster than npm 11 and pnpm 11 on that same machine and method.
+On the spec-finder fixture, Knot and bun are now effectively tied on default backends after the 2026-09-26 parallel rematerialization pass.
+Knot measured 24.71 ms median versus bun at 25.35 ms, while remaining faster than npm 11 and pnpm 11 on that machine and method.
 The notes in those files list versions, the mismatched lock graphs, and what was not measured.
 
 ## Compilation and bundling
