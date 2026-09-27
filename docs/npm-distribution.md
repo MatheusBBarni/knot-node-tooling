@@ -97,9 +97,9 @@ This directory is built by the release job and is not the repository root.
 
 `license` in the example is a placeholder for the SPDX expression chosen before publish.
 The repository has no `LICENSE` file yet.
-Each published tarball includes the license file npm always packs.
-The first publish waits until that expression and file exist, including notices for anything linked into the binary from `src/host/`.
-
+npm does not synthesize a license file from package metadata.
+Before publishing, staging must copy the selected license and notices for anything linked into the binary from `src/host/` into every package that needs them.
+The first publish waits until that expression, file, and notices exist.
 `engines.node` is `>=18` because the launcher only needs `fs`, `path`, `os`, `crypto`, `module`, and `child_process`.
 The repository root keeps `"node": "^24.0.0"` for the acceptance driver.
 Copying the root engines field into the wrapper would make Knot refuse the package on Node 20 and 22.
@@ -200,10 +200,10 @@ The launcher makes no network request and reads no registry credentials.
 `knot --version` prints the version field of the repository `package.json`, with a trailing newline.
 `tests/acceptance/cli/version.test.mjs` locks that to the literal printed by `dispatch_version` in `src/knot.bend`.
 The release has one version string.
-It is the git tag without the leading `v`, the root `package.json`, the literal in `src/knot.bend`, and every staged npm `package.json`.
-
+The release tag is created from a commit whose root `package.json`, the literal in `src/knot.bend`, and every staged npm `package.json` use the tag version without the leading `v`.
+The current development tree stays at `0.0.0` and `private: true`.
+Release preparation must change the root version and the Bend literal to `0.1.0` before creating `v0.1.0`; staging refuses a mismatch.
 The first published version is `0.1.0`.
-The repository stays `0.0.0` until the tag that passes the release gate.
 `0.1.0` is still a pre-1.0 release.
 The bundler and the test runner are not part of it.
 
@@ -231,7 +231,7 @@ The current host adapters are part of the runtime contract of that binary:
 `knot --version` does not use those adapters.
 `knot install` does.
 A platform package is publishable when a clean image of that `os` / `cpu` / `libc` can run the focused one-package install acceptance test using the packed npm tarballs.
-The clean image includes Node, because npm is the installer, plus the host tools that build still requires.
+The clean image includes Node, because npm is the installer, plus the host tools that the shipped binary still requires at runtime.
 Today those tools are `curl`, `gzip`, and zlib.
 Apple provides CommonCrypto and `libz` on the OS.
 Linux does not pass the gate while SHA-512 returns `ENOSYS`.
@@ -260,6 +260,8 @@ A cross-compiled binary waits for a later version that boots it on the real targ
 `0.1.0` is not tagged until `darwin-arm64` and `linux-x64` glibc are both in that list and both passed.
 Other rows can be absent from `0.1.0`.
 Their absence is the launcher's exit 127, with the package name it looked for.
+The checked-in workflow currently runs only on `macos-latest`, so it can stage the current `darwin-arm64` host target but cannot satisfy the first-tag gate.
+The Linux x64 glibc target requires a matching runner, a native build, and the clean-image acceptance test before `v0.1.0` can be tagged.
 
 ## Installing Knot with Knot
 
@@ -299,6 +301,10 @@ That job does not get `id-token`.
 Actions are pinned to commit SHAs.
 `actions/setup-node` uses `package-manager-cache: false`.
 A GitHub environment protects both jobs and requires a maintainer review.
+The checked-in workflow currently supplies `NODE_AUTH_TOKEN` from `NPM_TOKEN` while creating stages.
+That is token-authenticated staged publishing, not evidence that npm OIDC trusted publishing is configured or that provenance will be attached.
+Before the first publish, configure and exercise the intended authentication mode in npm.
+The preferred mode is OIDC trusted publishing, which removes `NPM_TOKEN` and keeps `id-token: write`; if a stage-only token is retained instead, the release gate must not describe that run as trusted publishing.
 The npm job stages packages with `npm stage publish --access public`.
 `actions/setup-node` sets `registry-url` to `https://registry.npmjs.org`, which makes npm read `NODE_AUTH_TOKEN`.
 That variable is the Actions secret `NPM_TOKEN`.
@@ -329,7 +335,8 @@ They are not a second installer.
 
 ## Repository package
 
-The root `package.json` keeps `"name": "knot"`, `"version": "0.0.0"`, and `"private": true` until the `0.1.0` tag.
+The current repository package keeps `"name": "knot"`, `"version": "0.0.0"`, and `"private": true`.
+Release preparation changes the root version and Bend literal before creating the release tag; the release commit is no longer the `0.0.0` development tree.
 `private: true` makes `npm publish` from the repository root fail.
 Release staging directories are the only directories that are published.
 They are generated.
@@ -349,7 +356,7 @@ A tag is publishable when all of the following are true for every target include
 - The focused one-package install acceptance test passes when `KNOT` is that installed command, on a clean image of the target.
 - Replacing one byte of the platform binary makes the launcher exit 1 before the binary starts.
 - A target that was not packed produces exit 127 and names the missing package.
-- The workflow used trusted publishing, staged publish, and the checksum file matches the packed binaries.
+- The workflow used the configured npm authentication mode, used staged publish, and the checksum file matches the packed binaries.
 
 The Knot-install gate in the previous section is required before this document calls Knot able to install Knot.
 It is not required to publish the npm packages.
