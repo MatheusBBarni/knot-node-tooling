@@ -2,26 +2,62 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
-static int pkg_file_side_effects_cmd(const char* path, char* out, size_t out_n) {
-  const char* root = getenv("KNOT_ROOT");
-  if (root == NULL || root[0] == 0) {
-    errno = EINVAL;
-    return -1;
+#include "pkg_json.h"
+
+static char* knot_read_file(const char* path) {
+  FILE* f = fopen(path, "rb");
+  if (f == NULL) return NULL;
+  if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return NULL; }
+  long size = ftell(f);
+  if (size < 0 || size > (4 * 1024 * 1024)) { fclose(f); errno = E2BIG; return NULL; }
+  rewind(f);
+  char* text = (char*)malloc((size_t)size + 1);
+  if (text == NULL) { fclose(f); errno = ENOMEM; return NULL; }
+  size_t got = fread(text, 1, (size_t)size, f);
+  fclose(f);
+  if (got != (size_t)size) { free(text); errno = EIO; return NULL; }
+  text[got] = 0;
+  return text;
+}
+
+static int knot_parent(char* path) {
+  char* slash = strrchr(path, '/');
+  if (slash == NULL) {
+    strcpy(path, ".");
+    return 1;
   }
-  const char* rp = (path && path[0]) ? path : ".";
-  char cmd[8192];
-  snprintf(cmd, sizeof(cmd), "node \"%s/scripts/pkg-exports.mjs\" fileSideEffects '%s'", root, rp);
-  FILE* p = popen(cmd, "r");
-  if (p == NULL) return -1;
-  size_t n = fread(out, 1, out_n - 1, p);
-  int st = pclose(p);
-  if (st != 0) {
-    errno = EINVAL;
-    return -1;
+  if (slash == path) {
+    path[1] = 0;
+    return 1;
   }
-  out[n] = 0;
+  *slash = 0;
+  return 1;
+}
+
+static int pkg_file_side_effects_lookup(const char* path, char* out, size_t out_n) {
+  char dir[4096];
+  if (snprintf(dir, sizeof(dir), "%s", path[0] ? path : ".") >= (int)sizeof(dir)) { errno = ENAMETOOLONG; return -1; }
+  knot_parent(dir);
+  for (int depth = 0; depth < 12; depth += 1) {
+    char package_path[4096];
+    if (snprintf(package_path, sizeof(package_path), "%s/package.json", dir) >= (int)sizeof(package_path)) { errno = ENAMETOOLONG; return -1; }
+    char* text = knot_read_file(package_path);
+    if (text != NULL) {
+      const char* rel = path;
+      size_t dir_len = strlen(dir);
+      if (strncmp(path, dir, dir_len) == 0 && path[dir_len] == '/') rel = path + dir_len + 1;
+      int ok = knot_pj_side_effects(text, rel, out, out_n);
+      free(text);
+      return ok ? 0 : -1;
+    }
+    char* slash = strrchr(dir, '/');
+    if (slash == NULL) break;
+    if (slash == dir) { dir[1] = 0; }
+    else *slash = 0;
+  }
+  if (out_n < 2) { errno = ENOMEM; return -1; }
+  strcpy(out, "1");
   return 0;
 }
 
@@ -32,7 +68,7 @@ typedef struct {
 
 static void pkg_file_side_effects_call(IoWork* w) {
   PkgFileSE* g = (PkgFileSE*)w->data;
-  io_sys_end(w, pkg_file_side_effects_cmd(g->path, g->out, 1 << 20));
+  io_sys_end(w, pkg_file_side_effects_lookup(g->path, g->out, 1 << 20));
 }
 
 static Term pkg_file_side_effects_pack(Env e, IoWork* w) {

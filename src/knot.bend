@@ -37,6 +37,11 @@ def Fs.offline_lock() -> IO(Result<&1, &1, U32 & String, String>):
 def Fs.unlink(path: String) -> IO(Result<&1, &1, U32 & String, Unit>):
   import "./host/fs_unlink.c"
   import "./host/fs_unlink.js"
+def Fs.rename(src: String, dst: String) ->
+  IO(Result<&1, &1, U32 & String, Unit>):
+  import "./host/fs_rename.c"
+  import "./host/fs_rename.js"
+
 
 def Fs.read_dir(path: String) -> IO(Result<&1, &1, U32 & String, String>):
   import "./host/fs_read_dir.c"
@@ -100,6 +105,16 @@ def Ts.lower(source: String) ->
   import "./host/ts_lower.c"
   import "./host/ts_lower.js"
 
+def Syntax.validate(source: String) ->
+  IO(Result<&1, &1, U32 & String, String>):
+  import "./host/syntax_validate.c"
+  import "./host/syntax_validate.js"
+
+def Source.normalize(source: String) ->
+  IO(Result<&1, &1, U32 & String, String>):
+  import "./host/source_normalize.c"
+  import "./host/source_normalize.js"
+
 def Pkg.exports(text: String, subpath: String, conditions: String) ->
   IO(Result<&1, &1, U32 & String, String>):
   import "./host/pkg_exports.c"
@@ -154,11 +169,25 @@ def write_text_fin(pair: File & Result<&1, &1, U32 & String, Unit>) -> IO(Unit):
     File.close(file2)
     IO.pass(Unit, body)
 
+
 def write_text(path: String, text: String) -> IO(Unit):
   do IO<Unit>:
     file : File <- IO.try(File, File.open(path, "w"))
     pair : File & Result<&1, &1, U32 & String, Unit> <- File.write(file, text)
     write_text_fin(pair)
+def rename_result(r: Result<&1, &1, U32 & String, Unit>) -> IO(Unit):
+  match r:
+    case Fail{_}:
+      IO.die(Unit, 2, "knot: atomic activation failed")
+    case Done{_}:
+      IO.pure(Unit, Unit{})
+
+def write_text_atomic(+path: String, +text: String) -> IO(Unit):
+  do IO<Unit>:
+    +tmp : String = path ++ ".tmp"
+    u0 : Unit <- write_text(tmp, text)
+    r : Result<&1, &1, U32 & String, Unit> <- Fs.rename(tmp, path)
+    rename_result(r)
 
 def lock_le(a: String, b: String) -> Bool:
   String.is_le(a, b)
@@ -2462,9 +2491,44 @@ def ts_prep_mode(ts: Bool, +src: String) -> IO(String):
       IO.pure(String, src)
     case True{}:
       ts_prep_do(src)
+def validate_source_msg(+src: String, +msg: String, empty: Bool) -> IO(String):
+  match empty:
+    case True{}:
+      IO.pure(String, src)
+    case False{}:
+      IO.die(String, 1, "knot: " ++ msg ++ " (syntax_error)")
+
+def validate_source_res(+src: String, r: Result<&1, &1, U32 & String, String>) -> IO(String):
+  match r:
+    case Fail{_}:
+      IO.die(String, 1, "knot: syntax validation failed (syntax_error)")
+    case Done{+msg}:
+      validate_source_msg(src, msg, String.is_empty(msg))
+
+def validate_source(+src: String) -> IO(String):
+  do IO<String>:
+    r : Result<&1, &1, U32 & String, String> <- Syntax.validate(src)
+    validate_source_res(src, r)
+
+
+def normalize_source_res(r: Result<&1, &1, U32 & String, String>) -> IO(String):
+  match r:
+    case Fail{_}:
+      IO.die(String, 1, "knot: source normalization failed (syntax_error)")
+    case Done{+s}:
+      IO.pure(String, s)
+
+def normalize_source(+src: String) -> IO(String):
+  do IO<String>:
+    r : Result<&1, &1, U32 & String, String> <- Source.normalize(src)
+    normalize_source_res(r)
+
 
 def ts_prep(+file: String, +src: String) -> IO(String):
-  ts_prep_mode(is_ts(file), src)
+  do IO<String>:
+    normalized : String <- normalize_source(src)
+    mid : String <- ts_prep_mode(is_ts(file), normalized)
+    validate_source(mid)
 
 def transpile_none(first: Bool) -> IO(Unit):
   match first:
@@ -2476,14 +2540,14 @@ def transpile_none(first: Bool) -> IO(Unit):
 def transpile_write_js_none(none: Bool, +jsp: String, +js: String) -> IO(Unit):
   match none:
     case True{}:
-      write_text(jsp, js ++ "\n")
+      write_text_atomic(jsp, js ++ "\n")
     case False{}:
-      write_text(jsp, js ++ "\n//# sourceMappingURL=" ++ Compiler.basename(jsp) ++ ".map\n")
+      write_text_atomic(jsp, js ++ "\n//# sourceMappingURL=" ++ Compiler.basename(jsp) ++ ".map\n")
 
 def transpile_write_js_ext(ext: Bool, +jsp: String, +js: String, +sm: String) -> IO(Unit):
   match ext:
     case True{}:
-      write_text(jsp, js ++ "\n")
+      write_text_atomic(jsp, js ++ "\n")
     case False{}:
       transpile_write_js_none(String.eq(sm, "none"), jsp, js)
 
@@ -2495,7 +2559,7 @@ def transpile_write_map_none(none: Bool, +jsp: String, +map: String) -> IO(Unit)
     case True{}:
       IO.pure(Unit, Unit{})
     case False{}:
-      write_text(jsp ++ ".map", map)
+      write_text_atomic(jsp ++ ".map", map)
 
 def transpile_write_map(+jsp: String, +map: String, +sm: String) -> IO(Unit):
   transpile_write_map_none(String.eq(sm, "none"), jsp, map)
@@ -2504,9 +2568,9 @@ def transpile_ok_to(+jsp: String, js: String, map: String, +sm: String) -> IO(Un
   do IO<Unit>:
     u0 : Unit <- IO.try(Unit, Fs.mkdir_p(Compiler.dirname(jsp)))
     u1 : Unit <- IO.try(Unit, Fs.mkdir_p(".knot/build-cache"))
-    u2 : Unit <- write_text(".knot/build-cache/v1", "1")
-    u3 : Unit <- transpile_write_js(jsp, js, sm)
-    transpile_write_map(jsp, map, sm)
+    u2 : Unit <- transpile_write_js(jsp, js, sm)
+    u3 : Unit <- transpile_write_map(jsp, map, sm)
+    write_text_atomic(".knot/build-cache/v1", "2")
 
 
 def transpile_ok(+file: String, js: String, map: String, +sm: String) -> IO(Unit):
@@ -2526,44 +2590,67 @@ def transpile_write_to(+file: String, +jsp: String, r: Compiler.TRes, +sm: Strin
     case Compiler.TErr{msg, line, col}:
       IO.die(Unit, 1, "knot: " ++ file ++ ":" ++ U32.show(U32.inc(line)) ++ ":" ++ U32.show(U32.inc(col)) ++ ": " ++ msg ++ " (syntax_error)")
 
-def transpile_one_miss(+file: String, +src: String, +sm: String) -> IO(Unit):
+def transpile_cache_key(+file: String, +src: String, +mode: String, +sm: String, +factory: String, +fragment: String, +isrc: String) -> String:
+  "knot-cache-v2\n" ++ file ++ "\n" ++ mode ++ "\n" ++ sm ++ "\n" ++ factory ++ "\n" ++ fragment ++ "\n" ++ isrc ++ "\n" ++ src
+
+def transpile_one_miss(+file: String, +src: String, +sm: String, +key: String) -> IO(Unit):
   do IO<Unit>:
     u : Unit <- transpile_write(file, Compiler.transpile(file, src), sm)
-    write_text(".knot/build-cache/src", src)
+    write_text_atomic(".knot/build-cache/src", key)
 
-def transpile_one_eq(+file: String, +src: String, eq: Bool, +sm: String) -> IO(Unit):
+def transpile_one_eq(+file: String, +src: String, eq: Bool, +sm: String, +key: String, output: Bool) -> IO(Unit):
   match eq:
-    case True{}:
-      IO.pure(Unit, Unit{})
     case False{}:
-      transpile_one_miss(file, src, sm)
+      transpile_one_miss(file, src, sm, key)
+    case True{}:
+      match output:
+        case True{}:
+          IO.pure(Unit, Unit{})
+        case False{}:
+          transpile_one_miss(file, src, sm, key)
 
-def transpile_one_src_ex(+file: String, +src: String, ex: Bool, +sm: String) -> IO(Unit):
+def transpile_cache_output_map_mode(none: Bool, +jsp: String) -> IO(Bool):
+  match none:
+    case True{}:
+      IO.pure(Bool, True{})
+    case False{}:
+      file_exists(jsp ++ ".map")
+
+def transpile_cache_output_map(sm: String, +jsp: String, js: Bool) -> IO(Bool):
+  match js:
+    case False{}:
+      IO.pure(Bool, False{})
+    case True{}:
+      transpile_cache_output_map_mode(String.eq(sm, "none"), jsp)
+
+def transpile_one_src_ex(+file: String, +src: String, ex: Bool, +sm: String, +key: String) -> IO(Unit):
   match ex:
     case False{}:
-      transpile_one_miss(file, src, sm)
+      transpile_one_miss(file, src, sm, key)
     case True{}:
       do IO<Unit>:
         +c : String <- read_text(".knot/build-cache/src")
-        transpile_one_eq(file, src, String.eq(src, c), sm)
+        js : Bool <- file_exists(Compiler.js_path(file))
+        output : Bool <- transpile_cache_output_map(sm, Compiler.js_path(file), js)
+        transpile_one_eq(file, src, String.eq(key, c), sm, key, output)
 
-def transpile_one_v1(+file: String, +src: String, v1: Bool, +sm: String) -> IO(Unit):
+def transpile_one_v1(+file: String, +src: String, v1: Bool, +sm: String, +key: String) -> IO(Unit):
   match v1:
     case False{}:
-      transpile_one_miss(file, src, sm)
+      transpile_one_miss(file, src, sm, key)
     case True{}:
       do IO<Unit>:
         ex : Bool <- file_exists(".knot/build-cache/src")
-        transpile_one_src_ex(file, src, ex, sm)
-
+        transpile_one_src_ex(file, src, ex, sm, key)
 
 def transpile_one(+file: String, +mode: String, +sm: String, +factory: String, +fragment: String, +isrc: String) -> IO(Unit):
   do IO<Unit>:
     +raw : String <- read_text(file)
     +mid : String <- ts_prep(file, raw)
     +src : String <- jsx_prep(file, mid, mode, factory, fragment, isrc)
+    key : String = transpile_cache_key(file, src, mode, sm, factory, fragment, isrc)
     v1 : Bool <- file_exists(".knot/build-cache/v1")
-    transpile_one_v1(file, src, v1, sm)
+    transpile_one_v1(file, src, v1, sm, key)
 
 
 def transpile_one_to_min(+file: String, +out: String, minify: Bool, ids: Bool, +mode: String, +sm: String, +factory: String, +fragment: String, +isrc: String) -> IO(Unit):
@@ -2876,7 +2963,8 @@ def analyze_miss_add(+miss: List<&2, String>, +spec: String, empty: Bool) -> Lis
           IO.pure(List<&2, String> & List<&2, String> & List<&2, String>, (visited, mods, miss))
         case False{}:
           do IO<List<&2, String> & List<&2, String> & List<&2, String>>:
-            +src : String <- read_text(file)
+            raw : String <- read_text(file)
+            +src : String <- normalize_source(raw)
             +imps2 : List<&2, String> = Compiler.imports_of(src)
             +exps : List<&2, String> = Compiler.exports_of(src)
             +mod : String = analyze_mod_json(file, imps2, exps)
@@ -3349,7 +3437,8 @@ def list_app(xs: List<&2, String>, x: String) -> List<&2, String>:
           IO.pure(List<&2, String>, visited)
         case False{}:
           do IO<List<&2, String>>:
-            src : String <- read_text(file)
+            raw : String <- read_text(file)
+            src : String <- normalize_source(raw)
             vis2 : List<&2, String> <- collect_go(1n, file, Compiler.imports_of(src), visited, False{}, conds)
             return list_app(vis2, file)
     case _:
@@ -3381,16 +3470,21 @@ def live_imports_of(+src: String) -> IO(List<&2, String>):
     r : Result<&1, &1, U32 & String, String> <- Live.imports(src)
     live_imports_res(r)
 
+
 def collect_keep(files: List<&2, String>) -> IO(List<&2, String>):
   match files:
     case Nil{}:
       IO.pure(List<&2, String>, Nil{})
     case Con{+f, rest}:
       do IO<List<&2, String>>:
-        src : String <- read_text(f)
+        raw : String <- read_text(f)
+        src : String <- normalize_source(raw)
         names : List<&2, String> <- live_imports_of(src)
+        raw2 : String <- read_text(f)
+        src2 : String <- normalize_source(raw2)
+        local : List<&2, String> = Compiler.non_export_function_names_of(src2)
         more : List<&2, String> <- collect_keep(rest)
-        return strs_cat(names, more)
+        return strs_cat(names, strs_cat(local, more))
 
 def se_flag_trim(+s: String) -> String:
   String.take(s, 1n)
@@ -3548,7 +3642,7 @@ def emit_dyn_go(+importer: String, +out: String, +spec: String) -> IO(Unit):
   do IO<Unit>:
     +name : String <- emit_dyn_one(importer, Compiler.dirname(out), spec)
     js : String <- read_text(out)
-    write_text(out, str_replace(0n, js, dyn_old(spec), "./" ++ name, False{}, False{}))
+    write_text_atomic(out, str_replace(0n, js, dyn_old(spec), "./" ++ name, False{}, False{}))
 
 def emit_dyn(+importer: String, +out: String, specs: List<&2, String>) -> IO(Unit):
   match specs:
@@ -3576,6 +3670,28 @@ def emit_req(+importer: String, +out: String, specs: List<&2, String>) -> IO(Uni
       do IO<Unit>:
         u : Unit <- emit_req_one(importer, Compiler.dirname(out), spec)
         emit_req(importer, out, rest)
+
+def bundle_preflight_one(+importer: String, +spec: String) -> IO(Unit):
+  do IO<Unit>:
+    +path : String <- resolve_open(importer, spec)
+    raw : String <- read_text(path)
+    src : String <- ts_prep(path, raw)
+    validated : String <- bundle_js(path, Compiler.transpile(path, src))
+    IO.pure(Unit, Unit{})
+
+def bundle_preflight_specs(+importer: String, specs: List<&2, String>) -> IO(Unit):
+  match specs:
+    case Nil{}:
+      IO.pure(Unit, Unit{})
+    case Con{+spec, rest}:
+      do IO<Unit>:
+        u : Unit <- bundle_preflight_one(importer, spec)
+        bundle_preflight_specs(importer, rest)
+
+def bundle_preflight(+file: String, +src: String) -> IO(Unit):
+  do IO<Unit>:
+    u : Unit <- bundle_preflight_specs(file, Compiler.dyn_imports_of(src))
+    bundle_preflight_specs(file, Compiler.requires_of(src))
 
 def bundle_write_dyn(+file: String, +out: String, +src: String) -> IO(Unit):
   do IO<Unit>:
@@ -3607,7 +3723,7 @@ def meta_write_none(none: Bool, +meta: String, +file: String, +out: String, +js:
       do IO<Unit>:
         inputs : String <- meta_inputs_go(files)
         +body : String = "{\"inputs\":{" ++ inputs ++ "},\"outputs\":{" ++ Compiler.json_str(out) ++ ":{\"bytes\":" ++ Nat.show(String.length(js)) ++ "}}}"
-        write_text(meta, body)
+        write_text_atomic(meta, body)
 
 def meta_write(+meta: String, +file: String, +out: String, +js: String, files: List<&2, String>) -> IO(Unit):
   meta_write_none(String.is_empty(meta), meta, file, out, js, files)
@@ -3617,9 +3733,11 @@ def bundle_write_opts(+file: String, +out: String, +conds: String, +meta: String
     +files : List<&2, String> <- bundle_files_conds(file, conds)
     keep : List<&2, String> <- collect_keep(files)
     +js : String <- emit_files(files, keep)
-    u0 : Unit <- transpile_ok_to(out, js, Compiler.make_map(file, Nil{}), "linked")
-    u1 : Unit <- meta_write(meta, file, out, js, files)
-    +src : String <- read_text(file)
+    raw : String <- read_text(file)
+    +src : String <- normalize_source(raw)
+    u0 : Unit <- bundle_preflight(file, src)
+    u1 : Unit <- transpile_ok_to(out, js, Compiler.make_map(file, Nil{}), "linked")
+    u2 : Unit <- meta_write(meta, file, out, js, files)
     bundle_write_dyn(file, out, src)
 
 def bundle_write(+file: String, +out: String) -> IO(Unit):

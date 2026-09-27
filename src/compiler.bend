@@ -532,12 +532,12 @@ def join_min(xs: List<&2, String>) -> String:
 def rewrite_ext_if(+s: String, ts: Bool) -> String:
   match ts:
     case True{}:
-      String.take(s, nat_sub(String.length(s), 3n)) ++ "js\""
+      String.take(s, nat_sub(String.length(s), 3n)) ++ "js" ++ String.take(String.drop(s, nat_sub(String.length(s), 1n)), 1n)
     case False{}:
       s
 
 def rewrite_ext(+s: String) -> String:
-  rewrite_ext_if(s, String.ends_with(s, ".ts\""))
+  rewrite_ext_if(s, Bool.or(String.ends_with(s, ".ts\""), String.ends_with(s, ".ts'")))
 
 def rewrite_texts(xs: List<&2, String>) -> List<&2, String>:
   match xs:
@@ -604,6 +604,7 @@ def f_bool() -> Bool:
 
 def dummy_tok() -> Token:
   Token{"", 0, 0, 0, 0}
+
 
 @unsafe def lex_go(sel: Nat, st: Lx) -> LexRes:
   match sel:
@@ -1105,26 +1106,28 @@ def export_kw(+t: String) -> Bool:
                           scan_go(0n, Sc{rest2, Con{text2, acc}, "", f_bool()})
 
 
-def unquote_tail(s: String) -> String:
-  match s:
-    case SNil{}:
-      ""
-    case SCon{'"', SNil{}}:
-      ""
-    case SCon{h, t}:
-      SCon{h, unquote_tail(t)}
+def unquote_tail_slice(+t: String) -> String:
+  n : Nat = String.length(t)
+  String.take(t, nat_sub(n, 1n))
+
+def unquote_mode(quoted: Bool, q: Char, +t: String) -> String:
+  match quoted:
+    case True{}:
+      unquote_tail_slice(t)
+    case False{}:
+      SCon{q, t}
 
 def unquote(s: String) -> String:
   match s:
-    case SCon{'"', t}:
-      unquote_tail(t)
+    case SCon{+q, +t}:
+      unquote_mode(Bool.or(Char.is_eq(q, '"'), Char.is_eq(q, '\'')), q, t)
     case _:
       s
 
 def is_string_tok(s: String) -> Bool:
   match s:
-    case SCon{'"', t}:
-      True{}
+    case SCon{+q, t}:
+      Bool.or(Char.is_eq(q, '"'), Char.is_eq(q, '\''))
     case _:
       False{}
 
@@ -1496,6 +1499,54 @@ def transpile_bundle_lex(+file: String, lr: LexRes) -> TRes:
 
 def transpile_bundle(+file: String, source: String) -> TRes:
   transpile_bundle_lex(file, lex(source))
+
+def fn_scan_sel(fn: Bool, prev_export: Bool) -> Nat:
+  match fn:
+    case False{}:
+      0n
+    case True{}:
+      match prev_export:
+        case True{}:
+          2n
+        case False{}:
+          1n
+
+@unsafe def scan_fn(sel: Nat, st: Sc) -> List<&2, String>:
+  match sel:
+    case 0n:
+      match st:
+        case Sc{+tokens, +acc, text, flag}:
+          match tokens:
+            case Nil{}:
+              str_rev(acc, Nil{})
+            case Con{Token{+text2, start, end, line, col}, rest2}:
+              scan_fn(fn_scan_sel(String.eq(text2, "function"), String.eq(text, "export")), Sc{rest2, acc, text2, f_bool()})
+    case 1n:
+      match st:
+        case Sc{+tokens, +acc, text, flag}:
+          match tokens:
+            case Nil{}:
+              str_rev(acc, Nil{})
+            case Con{Token{+text2, start, end, line, col}, rest2}:
+              scan_fn(0n, Sc{rest2, Con{text2, acc}, text2, f_bool()})
+    case _:
+      match st:
+        case Sc{+tokens, +acc, text, flag}:
+          match tokens:
+            case Nil{}:
+              str_rev(acc, Nil{})
+            case Con{Token{+text2, start, end, line, col}, rest2}:
+              scan_fn(0n, Sc{rest2, acc, text2, f_bool()})
+
+def non_export_function_names_lex(lr: LexRes) -> List<&2, String>:
+  match lr:
+    case LexErr{msg, line, col}:
+      Nil{}
+    case LexOk{tokens}:
+      scan_fn(0n, Sc{tokens, Nil{}, "", f_bool()})
+
+def non_export_function_names_of(source: String) -> List<&2, String>:
+  non_export_function_names_lex(lex(source))
 
 @unsafe def has_name(sel: Nat, xs: List<&2, String>, +f: String, eq: Bool) -> Bool:
   match sel:

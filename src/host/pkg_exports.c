@@ -1,60 +1,8 @@
 #include <errno.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
-static int pkg_exports_run_cmd(
-  const char* text,
-  const char* subpath,
-  const char* conditions,
-  char* out,
-  size_t out_n
-) {
-  const char* root = getenv("KNOT_ROOT");
-  if (root == NULL || root[0] == 0) {
-    errno = EINVAL;
-    return -1;
-  }
-  char inpath[] = "/tmp/knot-pex-in-XXXXXX";
-  int fd = mkstemp(inpath);
-  if (fd < 0) return -1;
-  size_t len = strlen(text);
-  if (write(fd, text, len) != (ssize_t)len) {
-    close(fd);
-    unlink(inpath);
-    return -1;
-  }
-  close(fd);
-
-  const char* sp = (subpath && subpath[0]) ? subpath : ".";
-  const char* cond = (conditions && conditions[0]) ? conditions : "import,module,node,default";
-
-  char cmd[8192];
-  snprintf(
-    cmd,
-    sizeof(cmd),
-    "node \"%s/scripts/pkg-exports.mjs\" resolve '%s' '%s' < \"%s\"",
-    root,
-    sp,
-    cond,
-    inpath
-  );
-  FILE* p = popen(cmd, "r");
-  if (p == NULL) {
-    unlink(inpath);
-    return -1;
-  }
-  size_t n = fread(out, 1, out_n - 1, p);
-  int st = pclose(p);
-  unlink(inpath);
-  if (st != 0) {
-    errno = ENOENT;
-    return -1;
-  }
-  out[n] = 0;
-  return 0;
-}
+#include "pkg_json.h"
 
 typedef struct {
   char* text;
@@ -65,7 +13,8 @@ typedef struct {
 
 static void pkg_exports_call(IoWork* w) {
   PkgExports* g = (PkgExports*)w->data;
-  io_sys_end(w, pkg_exports_run_cmd(g->text, g->subpath, g->conditions, g->out, 1 << 20));
+  int ok = knot_pj_exports(g->text, g->subpath, g->conditions, g->out, 1 << 20);
+  io_sys_end(w, ok ? 0 : -1);
 }
 
 static Term pkg_exports_pack(Env e, IoWork* w) {

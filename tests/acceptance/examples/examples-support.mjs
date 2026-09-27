@@ -4,7 +4,7 @@ import { runProcess } from "../../support/process.mjs";
 import { makeWorkspace, removeWorkspace } from "../../support/workspace.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
-const examplesRoot = path.join(repoRoot, "examples");
+const examplesRoot = path.join(repoRoot, "examples", "compiler");
 const knot = process.env.KNOT ?? path.join(repoRoot, "bin/knot");
 
 const SOURCE_EXTS = new Set([".ts", ".tsx"]);
@@ -22,7 +22,7 @@ export class ExampleFixture {
     return path.join(examplesRoot, name);
   }
 
-  /** Copy .ts/.tsx (and package.json if present) from examples/<name> into a temp workspace. */
+  /** Copy .ts/.tsx (and package.json if present) from examples/compiler/<name> into a temp workspace. */
   static async stage(name) {
     const srcDir = ExampleFixture.exampleDir(name);
     const entries = await readdir(srcDir, { withFileTypes: true });

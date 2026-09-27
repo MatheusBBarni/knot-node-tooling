@@ -1,57 +1,8 @@
 #include <errno.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
-static int pkg_side_effects_run_cmd(
-  const char* text,
-  const char* rel,
-  char* out,
-  size_t out_n
-) {
-  const char* root = getenv("KNOT_ROOT");
-  if (root == NULL || root[0] == 0) {
-    errno = EINVAL;
-    return -1;
-  }
-  char inpath[] = "/tmp/knot-pse-in-XXXXXX";
-  int fd = mkstemp(inpath);
-  if (fd < 0) return -1;
-  size_t len = strlen(text);
-  if (write(fd, text, len) != (ssize_t)len) {
-    close(fd);
-    unlink(inpath);
-    return -1;
-  }
-  close(fd);
-
-  const char* rp = (rel && rel[0]) ? rel : ".";
-
-  char cmd[8192];
-  snprintf(
-    cmd,
-    sizeof(cmd),
-    "node \"%s/scripts/pkg-exports.mjs\" sideEffects '%s' < \"%s\"",
-    root,
-    rp,
-    inpath
-  );
-  FILE* p = popen(cmd, "r");
-  if (p == NULL) {
-    unlink(inpath);
-    return -1;
-  }
-  size_t n = fread(out, 1, out_n - 1, p);
-  int st = pclose(p);
-  unlink(inpath);
-  if (st != 0) {
-    errno = EINVAL;
-    return -1;
-  }
-  out[n] = 0;
-  return 0;
-}
+#include "pkg_json.h"
 
 typedef struct {
   char* text;
@@ -61,7 +12,8 @@ typedef struct {
 
 static void pkg_side_effects_call(IoWork* w) {
   PkgSideEffects* g = (PkgSideEffects*)w->data;
-  io_sys_end(w, pkg_side_effects_run_cmd(g->text, g->rel, g->out, 1 << 20));
+  int ok = knot_pj_side_effects(g->text, g->rel, g->out, 1 << 20);
+  io_sys_end(w, ok ? 0 : -1);
 }
 
 static Term pkg_side_effects_pack(Env e, IoWork* w) {

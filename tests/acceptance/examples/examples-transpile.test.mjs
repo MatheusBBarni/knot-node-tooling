@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ExampleFixture } from "./examples-support.mjs";
 
-test("examples/basic: strips types and prints hello knot", async (t) => {
+test("examples/compiler/basic: strips types and prints hello knot", async (t) => {
   const workspace = await ExampleFixture.stage("basic");
   t.after(() => ExampleFixture.remove(workspace));
 
@@ -21,7 +21,7 @@ test("examples/basic: strips types and prints hello knot", async (t) => {
   assert.equal(run.stdout, "hello knot\n");
 });
 
-test("examples/enum: lowers enum and prints members", async (t) => {
+test("examples/compiler/enum: lowers enum and prints members", async (t) => {
   const workspace = await ExampleFixture.stage("enum");
   t.after(() => ExampleFixture.remove(workspace));
 
@@ -36,7 +36,7 @@ test("examples/enum: lowers enum and prints members", async (t) => {
   assert.equal(run.stdout, "1 2\n");
 });
 
-test("examples/namespace: lowers namespace and prints answer", async (t) => {
+test("examples/compiler/namespace: lowers namespace and prints answer", async (t) => {
   const workspace = await ExampleFixture.stage("namespace");
   t.after(() => ExampleFixture.remove(workspace));
 
@@ -51,7 +51,7 @@ test("examples/namespace: lowers namespace and prints answer", async (t) => {
   assert.equal(run.stdout, "42\n");
 });
 
-test("examples/param-props: assigns this.x/this.y and prints point", async (t) => {
+test("examples/compiler/param-props: assigns this.x/this.y and prints point", async (t) => {
   const workspace = await ExampleFixture.stage("param-props");
   t.after(() => ExampleFixture.remove(workspace));
 
@@ -68,7 +68,7 @@ test("examples/param-props: assigns this.x/this.y and prints point", async (t) =
   assert.equal(run.stdout, "3,4\n");
 });
 
-test("examples/satisfies: erases satisfies and prints port", async (t) => {
+test("examples/compiler/satisfies: erases satisfies and prints port", async (t) => {
   const workspace = await ExampleFixture.stage("satisfies");
   t.after(() => ExampleFixture.remove(workspace));
 
@@ -83,7 +83,7 @@ test("examples/satisfies: erases satisfies and prints port", async (t) => {
   assert.equal(run.stdout, "3000\n");
 });
 
-test("examples/jsx-classic: emits React.createElement shape", async (t) => {
+test("examples/compiler/jsx-classic: emits React.createElement shape", async (t) => {
   const workspace = await ExampleFixture.stage("jsx-classic");
   t.after(() => ExampleFixture.remove(workspace));
 
@@ -101,7 +101,7 @@ test("examples/jsx-classic: emits React.createElement shape", async (t) => {
   assert.doesNotMatch(js, /<\s*div/);
 });
 
-test("examples/jsx-automatic: jsx-runtime import and children", async (t) => {
+test("examples/compiler/jsx-automatic: jsx-runtime import and children", async (t) => {
   const workspace = await ExampleFixture.stage("jsx-automatic");
   t.after(() => ExampleFixture.remove(workspace));
 
@@ -119,7 +119,7 @@ test("examples/jsx-automatic: jsx-runtime import and children", async (t) => {
   assert.doesNotMatch(js, /<\s*div/);
 });
 
-test("examples/jsx-preserve: keeps JSX tags, strips types", async (t) => {
+test("examples/compiler/jsx-preserve: keeps JSX tags, strips types", async (t) => {
   const workspace = await ExampleFixture.stage("jsx-preserve");
   t.after(() => ExampleFixture.remove(workspace));
 
@@ -137,7 +137,7 @@ test("examples/jsx-preserve: keeps JSX tags, strips types", async (t) => {
   assert.doesNotMatch(js, /from\s+["']react\/jsx-runtime["']/);
 });
 
-test("examples/analyze-graph: JSON entries/modules/imports", async (t) => {
+test("examples/compiler/analyze-graph: JSON entries/modules/imports", async (t) => {
   const workspace = await ExampleFixture.stage("analyze-graph");
   t.after(() => ExampleFixture.remove(workspace));
 
@@ -157,7 +157,7 @@ test("examples/analyze-graph: JSON entries/modules/imports", async (t) => {
   assert.deepEqual(byFile["util.ts"].exports, ["add"]);
 });
 
-test("examples/sourcemap: linked map with real mappings", async (t) => {
+test("examples/compiler/sourcemap: linked map with real mappings", async (t) => {
   const workspace = await ExampleFixture.stage("sourcemap");
   t.after(() => ExampleFixture.remove(workspace));
 

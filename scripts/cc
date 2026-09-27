@@ -1,15 +1,15 @@
 #!/bin/sh
 set -e
-
+ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 llvm_clang=/opt/homebrew/opt/llvm@21/bin/clang
 lld=/opt/homebrew/opt/lld@21/bin/ld64.lld
-
+include="$ROOT/src/host"
 if [ -x "$llvm_clang" ] && [ -x "$lld" ]; then
-  exec "$llvm_clang" -fuse-ld="$lld" "$@"
+  exec "$llvm_clang" -I"$include" -fuse-ld="$lld" "$@"
 fi
 
 if command -v clang >/dev/null 2>&1; then
-  exec clang "$@"
+  exec clang -I"$include" "$@"
 fi
 
 echo "knot: no usable clang (need clang 14+, or Homebrew llvm@21 and lld@21 on macOS without Xcode)" >&2
