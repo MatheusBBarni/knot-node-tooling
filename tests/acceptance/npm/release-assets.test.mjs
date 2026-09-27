@@ -32,7 +32,7 @@ test("release assets match the packed darwin-arm64 binary", () => {
   assert.equal(fs.readFileSync(path.join(outDir, "SHA256SUMS"), "utf8"), `${digest}  knot-darwin-arm64\n`);
   assert.equal(fs.readFileSync(path.join(outDir, "assets.txt"), "utf8"), "SHA256SUMS\nknot-darwin-arm64\n");
   const notes = fs.readFileSync(path.join(outDir, "NOTES.md"), "utf8");
-  assert.match(notes, /Package version 0\.0\.0\./);
+  assert.match(notes, /Package version 0\.0\.1\./);
   assert.match(notes, /npm stage approve/);
   assert.equal(fs.existsSync(path.join(outDir, "NOTES.md")), true);
   assert.equal(fs.readFileSync(path.join(outDir, "assets.txt"), "utf8").includes("NOTES.md"), false);

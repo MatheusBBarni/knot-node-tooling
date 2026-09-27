@@ -5,7 +5,7 @@ Date: 2026-09-21
 Status: plan.
 Nothing in this document is published.
 The repository `package.json` stays `"private": true` until a tag meets the release gate below.
-`knot --version` still prints `0.0.0` in this tree.
+`knot --version` prints `0.0.1` in this release-preparation tree.
 
 This document owns how the `knot` command is packaged and published to the public npm registry.
 The package manager PRD still owns how Knot installs other people's packages.
@@ -69,9 +69,9 @@ This directory is built by the release job and is not the repository root.
 ```json
 {
   "name": "@scope/knot",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "Native JavaScript toolchain",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/MatheusBBarni/knot-node-tooling.git"
@@ -83,8 +83,8 @@ This directory is built by the release job and is not the repository root.
     "node": ">=18"
   },
   "optionalDependencies": {
-    "@scope/knot-darwin-arm64": "0.1.0",
-    "@scope/knot-linux-x64": "0.1.0"
+    "@scope/knot-darwin-arm64": "0.0.1",
+    "@scope/knot-linux-x64": "0.0.1"
   },
   "knot": {
     "bins": {
@@ -95,10 +95,10 @@ This directory is built by the release job and is not the repository root.
 }
 ```
 
-`license` in the example is a placeholder for the SPDX expression chosen before publish.
-The repository has no `LICENSE` file yet.
+The release uses the SPDX expression `Apache-2.0`.
+The repository includes `LICENSE`.
 npm does not synthesize a license file from package metadata.
-Before publishing, staging must copy the selected license and notices for anything linked into the binary from `src/host/` into every package that needs them.
+Staging copies the license and notices for anything linked into the binary from `src/host/` into every package.
 The first publish waits until that expression, file, and notices exist.
 `engines.node` is `>=18` because the launcher only needs `fs`, `path`, `os`, `crypto`, `module`, and `child_process`.
 The repository root keeps `"node": "^24.0.0"` for the acceptance driver.
@@ -123,9 +123,9 @@ Staging directory: `release/npm/knot-darwin-arm64/` and one sibling directory pe
 ```json
 {
   "name": "@scope/knot-darwin-arm64",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "knot binary for darwin-arm64",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/MatheusBBarni/knot-node-tooling.git"
@@ -201,10 +201,10 @@ The launcher makes no network request and reads no registry credentials.
 `tests/acceptance/cli/version.test.mjs` locks that to the literal printed by `dispatch_version` in `src/knot.bend`.
 The release has one version string.
 The release tag is created from a commit whose root `package.json`, the literal in `src/knot.bend`, and every staged npm `package.json` use the tag version without the leading `v`.
-The current development tree stays at `0.0.0` and `private: true`.
-Release preparation must change the root version and the Bend literal to `0.1.0` before creating `v0.1.0`; staging refuses a mismatch.
-The first published version is `0.1.0`.
-`0.1.0` is still a pre-1.0 release.
+The release-preparation tree uses `0.0.1` and remains `private: true`.
+Release preparation changes the root version and the Bend literal before creating `v0.0.1`; staging refuses a mismatch.
+The first published version is `0.0.1`.
+`0.0.1` is still a pre-1.0 release.
 The bundler and the test runner are not part of it.
 
 ## Host programs the binary still uses
@@ -257,11 +257,11 @@ A cross-compiled binary waits for a later version that boots it on the real targ
 | `@scope/knot-win32-x64` | `win32` | `x64` | | Later. The host adapters use `fork`, `execlp`, and Unix `dlopen` paths. |
 | `@scope/knot-win32-arm64` | `win32` | `arm64` | | Later, for the same reason. |
 
-`0.1.0` is not tagged until `darwin-arm64` and `linux-x64` glibc are both in that list and both passed.
-Other rows can be absent from `0.1.0`.
+`0.0.1` is not tagged until `darwin-arm64` and `linux-x64` glibc are both in that list and both passed.
+Other rows can be absent from `0.0.1`.
 Their absence is the launcher's exit 127, with the package name it looked for.
 The checked-in workflow currently runs only on `macos-latest`, so it can stage the current `darwin-arm64` host target but cannot satisfy the first-tag gate.
-The Linux x64 glibc target requires a matching runner, a native build, and the clean-image acceptance test before `v0.1.0` can be tagged.
+The Linux x64 glibc target requires a matching runner, a native build, and the clean-image acceptance test before `v0.0.1` can be tagged.
 
 ## Installing Knot with Knot
 
@@ -335,8 +335,8 @@ They are not a second installer.
 
 ## Repository package
 
-The current repository package keeps `"name": "knot"`, `"version": "0.0.0"`, and `"private": true`.
-Release preparation changes the root version and Bend literal before creating the release tag; the release commit is no longer the `0.0.0` development tree.
+The release-preparation repository package keeps `"name": "knot"`, `"version": "0.0.1"`, and `"private": true`.
+Release preparation changes the root version and Bend literal before creating the release tag; the release commit is no longer the development tree.
 `private: true` makes `npm publish` from the repository root fail.
 Release staging directories are the only directories that are published.
 They are generated.

@@ -74,6 +74,11 @@ export function stageNpmRelease({ rootDir, outDir, targets } = {}) {
   }
 
   const version = rootPkg.version;
+  const license = rootPkg.license;
+  const licensePath = path.join(rootDir, "LICENSE");
+  if (typeof license !== "string" || license.length === 0 || !fs.existsSync(licensePath)) {
+    throw new Error("root package license and LICENSE file are required");
+  }
   const chosen = (targets ?? [hostTarget(rootDir)]).slice().sort((left, right) => {
     return platformPackageName(left.platform, left.arch, left.libc).localeCompare(
       platformPackageName(right.platform, right.arch, right.libc),
@@ -99,6 +104,7 @@ export function stageNpmRelease({ rootDir, outDir, targets } = {}) {
     path.join(rootDir, "packaging", "npm", "README.md"),
     path.join(wrapperDir, "README.md"),
   );
+  fs.copyFileSync(licensePath, path.join(wrapperDir, "LICENSE"));
 
   const optionalDependencies = {};
   const bins = {};
@@ -106,6 +112,7 @@ export function stageNpmRelease({ rootDir, outDir, targets } = {}) {
     const name = platformPackageName(target.platform, target.arch, target.libc);
     const platformDir = path.join(outDir, platformFolder(name));
     fs.mkdirSync(path.join(platformDir, "bin"), { recursive: true });
+    fs.copyFileSync(licensePath, path.join(platformDir, "LICENSE"));
     const binaryDest = path.join(platformDir, "bin", binaryName(target.platform));
     fs.copyFileSync(target.binaryPath, binaryDest);
     fs.chmodSync(binaryDest, 0o755);
@@ -117,6 +124,7 @@ export function stageNpmRelease({ rootDir, outDir, targets } = {}) {
       name,
       version,
       description: `knot binary for ${triple}`,
+      license,
       repository: REPOSITORY,
       os: [target.platform],
       cpu: [target.arch],
@@ -133,6 +141,7 @@ export function stageNpmRelease({ rootDir, outDir, targets } = {}) {
     name: `${SCOPE}/knot`,
     version,
     description: "Native JavaScript toolchain",
+    license,
     repository: REPOSITORY,
     bin: {
       knot: "bin/knot.js",

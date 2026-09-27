@@ -51,7 +51,7 @@ test("npm pack of the staged wrapper and darwin-arm64 package lists only the rel
   const rootPkgPath = path.join(repoRoot, "package.json");
   const beforeRoot = fs.readFileSync(rootPkgPath, "utf8");
   const bendSource = fs.readFileSync(path.join(repoRoot, "src/knot.bend"), "utf8");
-  assert.equal(dispatchVersionLiteral(bendSource), "0.0.0");
+  assert.equal(dispatchVersionLiteral(bendSource), "0.0.1");
 
   const stage = await runProcess(process.execPath, [path.join(repoRoot, "scripts/stage-npm.mjs")], {
     cwd: repoRoot,
@@ -61,10 +61,10 @@ test("npm pack of the staged wrapper and darwin-arm64 package lists only the rel
 
   const rootPkg = JSON.parse(beforeRoot);
   assert.equal(rootPkg.name, "knot");
-  assert.equal(rootPkg.version, "0.0.0");
+  assert.equal(rootPkg.version, "0.0.1");
   assert.equal(rootPkg.private, true);
   assert.equal(rootPkg.engines.node, "^24.0.0");
-  assert.equal(fs.existsSync(path.join(repoRoot, "LICENSE")), false);
+  assert.equal(rootPkg.license, "Apache-2.0");
 
   const outDir = path.join(repoRoot, "release/npm");
   assert.deepEqual(fs.readdirSync(outDir).sort(), ["knot", "knot-darwin-arm64"]);
@@ -79,21 +79,23 @@ test("npm pack of the staged wrapper and darwin-arm64 package lists only the rel
   assert.equal(fs.readFileSync(launcher, "utf8"), fs.readFileSync(launcherSource, "utf8"));
   assert.equal(fs.readFileSync(launcher, "utf8").startsWith("#!/usr/bin/env node\n"), true);
   assert.equal(wrapper.name, "@scope/knot");
-  assert.equal(wrapper.version, "0.0.0");
+  assert.equal(wrapper.version, "0.0.1");
   assert.equal(platform.name, "@scope/knot-darwin-arm64");
-  assert.equal(platform.version, "0.0.0");
+  assert.equal(platform.version, "0.0.1");
   assert.equal(wrapper.description, "Native JavaScript toolchain");
   assert.deepEqual(wrapper.bin, { knot: "bin/knot.js" });
   assert.deepEqual(wrapper.engines, { node: ">=18" });
   assert.equal(wrapper.main, undefined);
   assert.equal(wrapper.exports, undefined);
   assert.equal(wrapper.scripts, undefined);
-  assert.equal(wrapper.license, undefined);
+  assert.equal(wrapper.license, "Apache-2.0");
   assert.equal(platform.scripts, undefined);
-  assert.equal(platform.license, undefined);
+  assert.equal(platform.license, "Apache-2.0");
   assert.deepEqual(wrapper.optionalDependencies, {
-    "@scope/knot-darwin-arm64": "0.0.0",
+    "@scope/knot-darwin-arm64": "0.0.1",
   });
+  assert.equal(fs.readFileSync(path.join(wrapperDir, "LICENSE"), "utf8"), fs.readFileSync(path.join(repoRoot, "LICENSE"), "utf8"));
+  assert.equal(fs.readFileSync(path.join(platformDir, "LICENSE"), "utf8"), fs.readFileSync(path.join(repoRoot, "LICENSE"), "utf8"));
   assert.deepEqual(platform.os, ["darwin"]);
   assert.deepEqual(platform.cpu, ["arm64"]);
   assert.equal("libc" in platform, false);
@@ -125,13 +127,14 @@ test("npm pack of the staged wrapper and darwin-arm64 package lists only the rel
   assert.ok(wrapperFiles.includes("package.json"));
   assert.ok(wrapperFiles.includes("bin/knot.js"));
   assert.ok(wrapperFiles.includes("README.md"));
+  assert.ok(wrapperFiles.includes("LICENSE"));
   assertPackedFiles(wrapperFiles);
 
   const platformPack = await runProcess("npm", ["pack", "--dry-run", "--json"], { cwd: platformDir });
   assert.equal(platformPack.status, 0, platformPack.stderr);
   const packed = JSON.parse(platformPack.stdout)[0];
   const platformFiles = packed.files.map((file) => file.path);
-  assert.deepEqual(platformFiles.slice().sort(), ["bin/knot", "package.json"]);
+  assert.deepEqual(platformFiles.slice().sort(), ["LICENSE", "bin/knot", "package.json"]);
   const packedBin = packed.files.find((file) => file.path === "bin/knot");
   assert.ok(packedBin.mode & 0o111, JSON.stringify(packedBin));
   assertPackedFiles(platformFiles);

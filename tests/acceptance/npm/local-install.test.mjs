@@ -37,7 +37,7 @@ test("npm install of the staged tarballs runs the packed knot binary", { timeout
   assert.equal(process.platform, "darwin");
   assert.equal(process.arch, "arm64");
   const rootPkg = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
-  assert.equal(rootPkg.version, "0.0.0");
+  assert.equal(rootPkg.version, "0.0.1");
 
   const out = fs.mkdtempSync(path.join(os.tmpdir(), "knot-stage-"));
   const packs = fs.mkdtempSync(path.join(os.tmpdir(), "knot-pack-"));
@@ -61,7 +61,7 @@ test("npm install of the staged tarballs runs the packed knot binary", { timeout
   const first = await runProcess(knot, ["--version"], { cwd: project });
   const second = await runProcess(knot, ["--version"], { cwd: project });
   assert.equal(first.status, 0, first.stderr);
-  assert.equal(first.stdout, "0.0.0\n");
+  assert.equal(first.stdout, "0.0.1\n");
   assert.equal(second.status, 0, second.stderr);
   assert.equal(second.stdout, first.stdout);
   assert.equal(second.stderr, first.stderr);

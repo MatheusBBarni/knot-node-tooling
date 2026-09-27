@@ -3981,7 +3981,7 @@ def run_help() -> IO(Unit):
 def dispatch_version(+cmd: String, rest: List<&2, String>, is_version: Bool) -> IO(Unit):
   match is_version:
     case True{}:
-      IO.print("0.0.0")
+      IO.print("0.0.1")
     case False{}:
       dispatch_clean(cmd, rest, String.eq(cmd, "clean"))
 
