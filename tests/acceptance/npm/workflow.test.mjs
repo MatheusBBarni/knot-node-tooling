@@ -35,7 +35,7 @@ test("the publish workflow builds both first-release targets and creates a GitHu
   assert.equal(text.match(/NODE_AUTH_TOKEN:\s*\$\{\{ secrets\.NPM_TOKEN \}\}/g).length, 2);
   assert.match(text, /npm stage publish --access public/);
   assert.match(text, /npm publish --access public/);
-  assert.match(text, /npm view "\$name" name/);
+  assert.doesNotMatch(text, /npm view/);
   const uses = [...text.matchAll(/^\s{8}uses:\s*(\S+)/gm)].map((match) => match[1]);
   assert.equal(uses.filter((use) => use.startsWith("actions/checkout@")).length, 2);
   assert.equal(uses.filter((use) => use.startsWith("actions/setup-node@")).length, 2);

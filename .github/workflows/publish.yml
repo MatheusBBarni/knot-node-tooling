@@ -129,19 +129,18 @@ jobs:
           set -eu
           publish_package() {
             dir="$1"
-            name="$(node -p "require('./$dir/package.json').name")"
             error_file="$(mktemp)"
-            if npm view "$name" name >/dev/null 2>"$error_file"; then
-              (cd "$dir" && npm stage publish --access public)
-            else
-              if ! grep -Eq 'E404|404 Not Found' "$error_file"; then
-                cat "$error_file"
-                rm -f "$error_file"
-                return 1
-              fi
-              (cd "$dir" && npm publish --access public)
+            if (cd "$dir" && npm stage publish --access public) 2>"$error_file"; then
+              rm -f "$error_file"
+              return 0
+            fi
+            if ! grep -Eq 'E404|404 Not Found' "$error_file"; then
+              cat "$error_file"
+              rm -f "$error_file"
+              return 1
             fi
             rm -f "$error_file"
+            (cd "$dir" && npm publish --access public)
           }
           for dir in release/npm/knot-*; do
             publish_package "$dir"
@@ -153,19 +152,18 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -eu
-          name="$(node -p "require('./package.json').name")"
           error_file="$(mktemp)"
-          if npm view "$name" name >/dev/null 2>"$error_file"; then
-            npm stage publish --access public
-          else
-            if ! grep -Eq 'E404|404 Not Found' "$error_file"; then
-              cat "$error_file"
-              rm -f "$error_file"
-              exit 1
-            fi
-            npm publish --access public
+          if npm stage publish --access public 2>"$error_file"; then
+            rm -f "$error_file"
+            exit 0
+          fi
+          if ! grep -Eq 'E404|404 Not Found' "$error_file"; then
+            cat "$error_file"
+            rm -f "$error_file"
+            exit 1
           fi
           rm -f "$error_file"
+          npm publish --access public
 
       - name: Upload release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

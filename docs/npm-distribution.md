@@ -306,15 +306,15 @@ That is token-authenticated publishing, not evidence that npm OIDC trusted publi
 Before the first publish, configure and exercise the intended authentication mode in npm.
 The preferred mode is OIDC trusted publishing, which removes `NPM_TOKEN` and keeps `id-token: write`.
 If a token is retained instead, the release gate must not describe that run as trusted publishing.
-Npm rejects `npm stage publish` for a package name that does not already exist.
-The first release therefore bootstraps each absent package with `npm publish --access public`.
-After a package exists, the workflow uses `npm stage publish --access public` for later versions.
-The workflow fails on registry errors other than a package-not-found response.
+The workflow attempts `npm stage publish --access public` first.
+Npm rejects that command for a package name that does not already exist.
+The workflow falls back to `npm publish --access public` only for that package-not-found response.
+The workflow fails on other registry errors.
 `actions/setup-node` sets `registry-url` to `https://registry.npmjs.org`, which makes npm read `NODE_AUTH_TOKEN`.
 That variable is the Actions secret `NPM_TOKEN`.
 The secret value is not written into the repository.
 A maintainer approves staged versions with `npm stage approve` and 2FA.
-Direct `npm publish` is restricted to the one-time package bootstrap.
+Direct `npm publish` is restricted to the package bootstrap fallback.
 Order inside one release:
 
 1. Build each target on its runner and record the binary SHA-256.
@@ -358,7 +358,7 @@ A tag is publishable when all of the following are true for every target include
 - The focused one-package install acceptance test passes when `KNOT` is that installed command, on a clean image of the target.
 - Replacing one byte of the platform binary makes the launcher exit 1 before the binary starts.
 - A target that was not packed produces exit 127 and names the missing package.
-- The workflow used the configured npm authentication mode, used staged publish, and the checksum file matches the packed binaries.
+- The workflow used the configured npm authentication mode, used stage-first publishing with the package bootstrap fallback, and the checksum file matches the packed binaries.
 
 The Knot-install gate in the previous section is required before this document calls Knot able to install Knot.
 It is not required to publish the npm packages.
