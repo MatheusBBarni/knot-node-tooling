@@ -76,6 +76,11 @@ def Http.get_file(url: String, dest: String) ->
   import "./host/http_get_file.c"
   import "./host/http_get_file.js"
 
+def Http.get_meta_file(url: String, dest: String) ->
+  IO(Result<&1, &1, U32 & String, Unit>):
+  import "./host/http_get_file.c"
+  import "./host/http_get_file.js"
+
 def Gzip.inflate_file(path: String) -> IO(Result<&1, &1, U32 & String, String>):
   import "./host/gzip_inflate.c"
   import "./host/gzip_inflate.js"
@@ -91,6 +96,11 @@ def Tar.extract(archive: String, dest: String) ->
   import "./host/tar_extract.js"
 
 def Json.query(text: String, path: String, mode: String) ->
+  IO(Result<&1, &1, U32 & String, String>):
+  import "./host/json_query.c"
+  import "./host/json_query.js"
+
+def Json.query_file(file: String, path: String, mode: String) ->
   IO(Result<&1, &1, U32 & String, String>):
   import "./host/json_query.c"
   import "./host/json_query.js"
@@ -154,6 +164,13 @@ def read_text(+path: String) -> IO(String):
     r : Result<&1, &1, U32 & String, File> <- File.open(path, "r")
     file : File <- read_open(path, r)
     pair : File & Result<&1, &1, U32 & String, String> <- File.read(file, 4194304)
+    read_text_fin(pair)
+
+def read_metadata(+path: String) -> IO(String):
+  do IO<String>:
+    r : Result<&1, &1, U32 & String, File> <- File.open(path, "r")
+    file : File <- read_open(path, r)
+    pair : File & Result<&1, &1, U32 & String, String> <- File.read(file, 33554432)
     read_text_fin(pair)
 
 def read_pkg(+path: String) -> IO(String):
@@ -351,6 +368,27 @@ def json_optional_query(+text: String, +path: String, +mode: String) -> IO(Strin
     r : Result<&1, &1, U32 & String, String> <- Json.query(text, path, mode)
     json_optional_pairs_fin(r)
 
+def query_meta_at(
+  file: Bool,
+  +meta: String,
+  +path: String,
+  +mode: String
+) -> IO(Result<&1, &1, U32 & String, String>):
+  match file:
+    case False{}:
+      Json.query(meta, path, mode)
+    case True{}:
+      Json.query_file(String.drop(meta, 6n), path, mode)
+
+def query_meta(+meta: String, +path: String, +mode: String) ->
+  IO(Result<&1, &1, U32 & String, String>):
+  query_meta_at(String.starts_with(meta, "@file:"), meta, path, mode)
+
+def json_optional_meta_string(+meta: String, +path: String) -> IO(String):
+  do IO<String>:
+    r : Result<&1, &1, U32 & String, String> <- query_meta(meta, path, "string")
+    json_optional_pairs_fin(r)
+
 def need_json(r: Result<&1, &1, U32 & String, String>) -> IO(String):
   match r:
     case Fail{_}:
@@ -416,12 +454,25 @@ def need_integrity(s: String) -> IO(String):
       IO.pure(String, s)
 
 
-def pick_version_tag(+tag: String, +spec: String, +keys: String) -> IO(String):
+def need_tag(+tag: String) -> IO(String):
   match tag:
     case SNil{}:
-      need_version(Semver.select_version(spec, String.lines(keys)))
+      need_version(None{})
     case _:
       IO.pure(String, tag)
+
+def pick_version_tag(
+  selected: Maybe<&2, String>,
+  +spec: String,
+  +meta: String
+) -> IO(String):
+  match selected:
+    case Some{version}:
+      IO.pure(String, version)
+    case None{}:
+      do IO<String>:
+        tag : String <- json_optional_meta_string(meta, "dist-tags/" ++ spec)
+        need_tag(tag)
 
 
 
@@ -654,12 +705,14 @@ def ensure_unpacked(has: Bool, +tar: String, +unpacked: String) -> IO(Unit):
     case True{}:
       IO.pure(Unit, Unit{})
     case False{}:
-      extract_pkg(tar, unpacked)
+      do IO<Unit>:
+        extract_pkg(tar, unpacked)
+        write_text(unpacked ++ ".complete", "complete\n")
 
 def place_pkg(+tar: String, +dest: String, +integrity: String) -> IO(Unit):
   do IO<Unit>:
     +unp : String <- unpacked_path(integrity)
-    has : Bool <- file_exists(unp ++ "/package.json")
+    has : Bool <- file_exists(unp ++ ".complete")
     ensure_unpacked(has, tar, unp)
     IO.try(Unit, Fs.clone_dir(unp, dest))
 
@@ -787,7 +840,7 @@ def filter_age_one(+cutoff: String, +meta: String, +ver: String) -> IO(String):
       IO.pure(String, "")
     case _:
       do IO<String>:
-        t : String <- json_optional_string(meta, "time/" ++ ver)
+        t : String <- json_optional_meta_string(meta, "time/" ++ ver)
         return age_line(age_ok(cutoff, t), ver)
 
 def filter_age_keys(fuel: Nat, keys: List<&2, String>, +cutoff: String, +meta: String) -> IO(String):
@@ -821,22 +874,15 @@ def read_age_cutoff(ex: Bool) -> IO(String):
         return take_line(drop_until_key(toml, "minimum-release-age-before="), "")
 
 
-def pick_keys(+preferred: String, +fallback: String) -> String:
-  match preferred:
-    case SNil{}:
-      fallback
-    case _:
-      preferred
 
-def pick_version(+spec: String, +keys: String, +meta: String) -> IO(String):
+def pick_version(+spec: String, +meta: String) -> IO(String):
   do IO<String>:
     ex : Bool <- file_exists("knot.toml")
     cutoff : String <- read_age_cutoff(ex)
-    undep : String <- json_optional_query(meta, "versions", "undep_keys")
-    +pool : String = pick_keys(undep, keys)
+    pool_r : Result<&1, &1, U32 & String, String> <- query_meta(meta, "versions", "undep_keys")
+    +pool : String <- need_json(pool_r)
     +filtered : String <- filter_age_go(cutoff, pool, String.lines(pool), meta)
-    tag : String <- json_optional_string(meta, "dist-tags/" ++ spec)
-    pick_version_tag(tag, spec, filtered)
+    pick_version_tag(Semver.select_version(spec, String.lines(filtered)), spec, meta)
 
 
 def take_cr_line(s: String, acc: String) -> String:
@@ -1111,7 +1157,7 @@ def load_meta_reval(not_mod: Bool, +path: String, +resp: String) -> IO(Maybe<&2,
   match not_mod:
     case True{}:
       do IO<Maybe<&2, String>>:
-        txt : String <- read_text(path)
+        txt : String <- read_metadata(path)
         return Some{txt}
     case False{}:
       meta_from_resp(http_is_200(resp), path, resp)
@@ -1129,7 +1175,7 @@ def load_meta_cached(has_cond: Bool, +path: String, +url: String) -> IO(Maybe<&2
   match has_cond:
     case False{}:
       do IO<Maybe<&2, String>>:
-        txt : String <- read_text(path)
+        txt : String <- read_metadata(path)
         return Some{txt}
     case True{}:
       load_meta_cond(path, url)
@@ -1174,6 +1220,156 @@ def parts_hit(+seen: String, parts: List<&2, String>) -> Bool:
     case _:
       False{}
 
+def prefetched_name(got: Maybe<&2, String>, +name: String) -> String:
+  match got:
+    case Some{SCon{_, _}}:
+      "\n" ++ name ++ "\n"
+    case _:
+      ""
+
+def prefetch_meta_source(
+  https: Bool,
+  cached: Bool,
+  +name: String,
+  +path: String,
+  +url: String
+) -> IO(String):
+  match https cached:
+    case True{} False{}:
+      do IO<String>:
+        u : Unit <- IO.try(Unit, Http.get_meta_file(url, path))
+        return "\n" ++ name ++ "\n"
+    case True{} True{}:
+      IO.pure(String, "\n" ++ name ++ "\n")
+    case False{} _:
+      do IO<String>:
+        got : Maybe<&2, String> <- load_meta(cached, path, url)
+        return prefetched_name(got, name)
+
+def prefetch_meta(+name: String, +registry: String) -> IO(String):
+  do IO<String>:
+    +reg : String <- registry_for(registry, name)
+    +path : String <- cache_path(reg, name)
+    ex : Bool <- file_exists(path)
+    +url : String = reg ++ "/" ++ name
+    prefetch_meta_source(String.starts_with(url, "https://"), ex, name, path, url)
+
+def prefetch_line_name(parts: List<&2, String>) -> String:
+  match parts:
+    case Con{name, Con{_, _}}:
+      name
+    case _:
+      ""
+
+def cons_prefetch(
+  chan: Chan(String),
+  pair: List<&1, Chan(String)> & List<&2, String>
+) -> List<&1, Chan(String)> & List<&2, String>:
+  (chans, left) = pair
+  (Con{chan, chans}, left)
+
+@unsafe def prefetch_batch_k(
+  sel: Nat,
+  fuel: Nat,
+  lines: List<&2, String>,
+  +registry: String,
+  +skip: String,
+  +name: String,
+  duplicate: Bool
+) -> IO(List<&1, Chan(String)> & List<&2, String>):
+  match sel:
+    case 0n:
+      match fuel lines:
+        case 0n _:
+          IO.pure(List<&1, Chan(String)> & List<&2, String>, (Nil{}, lines))
+        case _ Nil{}:
+          IO.pure(List<&1, Chan(String)> & List<&2, String>, (Nil{}, Nil{}))
+        case 1n+p Con{line, rest}:
+          +next_name = prefetch_line_name(String.split(line, '\t'))
+          prefetch_batch_k(1n, 1n+p, rest, registry, skip, next_name, already(skip, next_name))
+    case _:
+      match fuel lines name duplicate:
+        case 0n rest_lines _ _:
+          IO.pure(List<&1, Chan(String)> & List<&2, String>, (Nil{}, rest_lines))
+        case 1n+p rest_lines SNil{} _:
+          prefetch_batch_k(0n, 1n+p, rest_lines, registry, skip, "", False{})
+        case 1n+p rest_lines _ True{}:
+          prefetch_batch_k(0n, 1n+p, rest_lines, registry, skip, "", False{})
+        case 1n+p rest_lines _ False{}:
+          do IO<List<&1, Chan(String)> & List<&2, String>>:
+            chan : Chan(String) <- IO.fork(String, prefetch_meta(name, registry))
+            pair : List<&1, Chan(String)> & List<&2, String> <- prefetch_batch_k(0n, p, rest_lines, registry, skip ++ name ++ "\n", "", False{})
+            return cons_prefetch(chan, pair)
+
+def prefetch_batch(
+  fuel: Nat,
+  lines: List<&2, String>,
+  +registry: String,
+  +skip: String
+) -> IO(List<&1, Chan(String)> & List<&2, String>):
+  prefetch_batch_k(0n, fuel, lines, registry, skip, "", False{})
+
+def join_prefetch(chans: List<&1, Chan(String)>, +names: String) -> IO(String):
+  match chans:
+    case Nil{}:
+      IO.pure(String, names)
+    case Con{chan, rest}:
+      do IO<String>:
+        got : String <- IO.join(String, chan)
+        join_prefetch(rest, names ++ got)
+
+@unsafe def prefetch_queue_k(
+  sel: Nat,
+  fuel: Nat,
+  lines: List<&2, String>,
+  +registry: String,
+  +seen: String,
+  +prefetched: String,
+  batch: List<&1, Chan(String)> & List<&2, String>
+) -> IO(String):
+  match sel:
+    case 0n:
+      match fuel:
+        case 0n:
+          IO.pure(String, prefetched)
+        case 1n+p:
+          do IO<String>:
+            pair : List<&1, Chan(String)> & List<&2, String> <-
+              prefetch_batch(16n, lines, registry, seen ++ prefetched)
+            prefetch_queue_k(1n, p, Nil{}, registry, seen, prefetched, pair)
+    case 1n:
+      (chans, left) = batch
+      do IO<String>:
+        names : String <- join_prefetch(chans, prefetched)
+        prefetch_queue_k(2n, fuel, left, registry, seen, names, (Nil{}, Nil{}))
+    case _:
+      match fuel lines:
+        case rest Nil{}:
+          IO.pure(String, prefetched)
+        case rest _:
+          prefetch_queue_k(0n, rest, lines, registry, seen, prefetched, (Nil{}, Nil{}))
+
+def prefetch_queue(
+  fuel: Nat,
+  lines: List<&2, String>,
+  +registry: String,
+  +seen: String,
+  +prefetched: String
+) -> IO(String):
+  prefetch_queue_k(0n, fuel, lines, registry, seen, prefetched, (Nil{}, Nil{}))
+
+def load_install_meta(
+  ready: Bool,
+  cached: Bool,
+  +path: String,
+  +url: String
+) -> IO(Maybe<&2, String>):
+  match ready:
+    case False{}:
+      load_meta(cached, path, url)
+    case True{}:
+      IO.pure(Maybe<&2, String>, Some{"@file:" ++ path})
+
 
 
 def install_job(
@@ -1185,6 +1381,7 @@ def install_job(
   +optional: Bool,
   +os_checked: Bool,
   +seen: String,
+  +prefetched: String,
   +hit: Bool
 ) -> IO(List<&2, String>):
   match fuel:
@@ -1197,9 +1394,9 @@ def install_job(
             case Nil{}:
               IO.pure(List<&2, String>, Nil{})
             case Con{SNil{}, rest}:
-              install_job(p, Nil{}, rest, registry, None{}, False{}, False{}, seen, False{})
+              install_job(p, Nil{}, rest, registry, None{}, False{}, False{}, seen, prefetched, False{})
             case Con{+line, rest}:
-              install_job(p, String.split(line, '\t'), rest, registry, None{}, String.contains(line, "\topt"), False{}, seen, parts_hit(seen, String.split(line, '\t')))
+              install_job(p, String.split(line, '\t'), rest, registry, None{}, String.contains(line, "\topt"), False{}, seen, prefetched, parts_hit(seen, String.split(line, '\t')))
         case Con{+name, Con{+spec, +tail}}:
           match meta_m:
             case None{}:
@@ -1207,48 +1404,47 @@ def install_job(
                 case True{}:
                   do IO<List<&2, String>>:
                     link_root_if(name, is_root_parts(tail))
-                    install_job(p, Nil{}, queue, registry, None{}, False{}, False{}, seen, False{})
+                    install_job(p, Nil{}, queue, registry, None{}, False{}, False{}, seen, prefetched, False{})
                 case False{}:
                   do IO<List<&2, String>>:
                     +reg : String <- registry_for(registry, name)
                     +path : String <- cache_path(reg, name)
                     ex : Bool <- file_exists(path)
-                    got : Maybe<&2, String> <- load_meta(ex, path, reg ++ "/" ++ name)
-                    install_job(p, Con{name, Con{spec, tail}}, queue, registry, got, optional, False{}, seen ++ name ++ "\n", False{})
+                    got : Maybe<&2, String> <- load_install_meta(already(prefetched, name), ex, path, reg ++ "/" ++ name)
+                    install_job(p, Con{name, Con{spec, tail}}, queue, registry, got, optional, False{}, seen ++ name ++ "\n", prefetched, False{})
             case Some{SNil{}}:
               match optional:
                 case True{}:
-                  install_job(p, Nil{}, queue, registry, None{}, False{}, False{}, seen, False{})
+                  install_job(p, Nil{}, queue, registry, None{}, False{}, False{}, seen, prefetched, False{})
                 case False{}:
                   IO.die(List<&2, String>, 1, "knot: registry HTTP error")
             case Some{+meta}:
               match os_checked:
                 case False{}:
                   do IO<List<&2, String>>:
-                    keys_r : Result<&1, &1, U32 & String, String> <- Json.query(meta, "versions", "keys")
-                    keys : String <- need_json(keys_r)
-                    +picked : String <- pick_version(spec, keys, meta)
+                    +picked : String <- pick_version(spec, meta)
+                    selected_r : Result<&1, &1, U32 & String, String> <-
+                      query_meta(meta, "versions/" ++ picked, "raw")
+                    +selected : String <- need_json(selected_r)
 
-                    osf : String <- json_optional_lines(meta, "versions/" ++ picked ++ "/os")
+                    osf : String <- json_optional_lines(selected, "os")
                     plat : String <- IO.try(String, Os.platform())
-                    cpf : String <- json_optional_lines(meta, "versions/" ++ picked ++ "/cpu")
+                    cpf : String <- json_optional_lines(selected, "cpu")
                     arch : String <- IO.try(String, Os.arch())
-                    eng : String <- json_optional_string(meta, "versions/" ++ picked ++ "/engines/node")
+                    eng : String <- json_optional_string(selected, "engines/node")
                     check_engine(eng)
-                    install_job(p, Con{name, Con{spec, tail}}, queue, registry, os_meta_or_skip(meta, Bool.and(os_allowed(osf, plat), os_allowed(cpf, arch))), optional, True{}, seen, False{})
+                    install_job(p, Con{name, Con{spec, tail}}, queue, registry, os_meta_or_skip(selected, Bool.and(os_allowed(osf, plat), os_allowed(cpf, arch))), optional, True{}, seen, prefetched, False{})
 
                 case True{}:
                   do IO<List<&2, String>>:
                     +tar_path : String = "node_modules/.knot-tmp/" ++ name ++ ".tgz"
                     +dest : String = "node_modules/.knot/" ++ name
                     u0 : Unit <- IO.try(Unit, Fs.mkdir_p("node_modules/.knot-tmp"))
-                    keys_r : Result<&1, &1, U32 & String, String> <- Json.query(meta, "versions", "keys")
-                    keys : String <- need_json(keys_r)
-                    +picked : String <- pick_version(spec, keys, meta)
-
-                    tar_r : Result<&1, &1, U32 & String, String> <- Json.query(meta, "versions/" ++ picked ++ "/dist/tarball", "string")
+                    picked_r : Result<&1, &1, U32 & String, String> <- Json.query(meta, "version", "string")
+                    +picked : String <- need_json(picked_r)
+                    tar_r : Result<&1, &1, U32 & String, String> <- Json.query(meta, "dist/tarball", "string")
                     +tarball : String <- need_json(tar_r)
-                    raw_int : String <- json_optional_string(meta, "versions/" ++ picked ++ "/dist/integrity")
+                    raw_int : String <- json_optional_string(meta, "dist/integrity")
                     +integrity : String <- need_integrity(raw_int)
                     +cas : String <- cas_file(integrity)
                     +ex_pkg : Bool <- file_exists(dest ++ "/package.json")
@@ -1259,7 +1455,9 @@ def install_job(
 
                     +req : String <- join_nested_deps(nested_txt)
                     +opt : String <- json_optional_pairs(nested_txt, "optionalDependencies")
-                    more : List<&2, String> <- install_job(p, Nil{}, List.append(&2, String, mark_nested_lines(String.lines(req)), List.append(&2, String, mark_optional_lines(String.lines(opt)), queue)), registry, None{}, False{}, False{}, seen, False{})
+                    +next : List<&2, String> = List.append(&2, String, mark_nested_lines(String.lines(req)), List.append(&2, String, mark_optional_lines(String.lines(opt)), queue))
+                    prefetched2 : String <- prefetch_queue(64n, next, registry, seen, prefetched)
+                    more : List<&2, String> <- install_job(p, Nil{}, next, registry, None{}, False{}, False{}, seen, prefetched2, False{})
                     link_children(dest, String.lines(req))
                     link_children(dest, String.lines(opt))
                     link_root_if(name, is_root_parts(tail))
@@ -1335,7 +1533,7 @@ def offline_one_have(has: Bool, +name: String, +dest: String, +integrity: String
       do IO<Unit>:
         u_log : Unit <- progress("+ " ++ name ++ "@" ++ ver)
         +unp : String <- unpacked_path(integrity)
-        has_unp : Bool <- file_exists(unp ++ "/package.json")
+        has_unp : Bool <- file_exists(unp ++ ".complete")
         offline_unp(has_unp, name, dest, integrity, tarball, unp)
 
 def offline_one(+name: String, +integrity: String, +tarball: String, +ver: String) -> IO(Unit):
@@ -2103,8 +2301,9 @@ def run_install_resolve(+registry: String, +pairs: String, +text: String) -> IO(
   do IO<Unit>:
     start : Nat <- IO.now()
     ws : String <- json_optional_lines(text, "workspaces")
-    pairs2 : String <- link_workspaces(8n, String.lines(ws), pairs)
-    +recs : List<&2, String> <- install_job(256n, Nil{}, String.lines(pairs2), registry, None{}, False{}, False{}, "\n", False{})
+    +pairs2 : String <- link_workspaces(8n, String.lines(ws), pairs)
+    prefetched : String <- prefetch_queue(64n, String.lines(pairs2), registry, "\n", "\n")
+    +recs : List<&2, String> <- install_job(256n, Nil{}, String.lines(pairs2), registry, None{}, False{}, False{}, "\n", prefetched, False{})
     u_sum : Unit <- progress(Nat.show(List.length(&2, String, recs)) ++ " packages installed")
     write_text("knot.lock", render_lock(List.sort(~String, ~lock_le, recs)))
     end : Nat <- IO.now()

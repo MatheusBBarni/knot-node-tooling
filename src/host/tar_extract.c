@@ -2,6 +2,8 @@
 // ====
 
 #include <dlfcn.h>
+#include <dirent.h>
+#include <unistd.h>
 #include <sys/stat.h>
 
 typedef struct {
@@ -258,9 +260,69 @@ static int tar_extract_blocking(const char* archive, const char* dest) {
   return 0;
 }
 
+static int tar_remove_tree(const char* path) {
+  struct stat st;
+  if (lstat(path, &st) != 0) {
+    return errno == ENOENT ? 0 : -1;
+  }
+  if (!S_ISDIR(st.st_mode) || S_ISLNK(st.st_mode)) {
+    return unlink(path);
+  }
+  DIR* dir = opendir(path);
+  if (dir == NULL) {
+    return -1;
+  }
+  int result = 0;
+  struct dirent* entry;
+  while ((entry = readdir(dir)) != NULL) {
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+      continue;
+    }
+    char child[4096];
+    if (snprintf(child, sizeof(child), "%s/%s", path, entry->d_name) >= (int)sizeof(child)
+      || tar_remove_tree(child) != 0) {
+      result = -1;
+      break;
+    }
+  }
+  int saved = errno;
+  closedir(dir);
+  if (result == 0 && rmdir(path) != 0) {
+    return -1;
+  }
+  if (result != 0) {
+    errno = saved;
+  }
+  return result;
+}
+
+static int tar_extract_atomic(const char* archive, const char* dest) {
+  char staging[4096];
+  if (snprintf(staging, sizeof(staging), "%s.tmp.XXXXXX", dest) >= (int)sizeof(staging)) {
+    errno = ENAMETOOLONG;
+    return -1;
+  }
+  if (tar_mkdir_parent(staging) != 0 || mkdtemp(staging) == NULL) {
+    return -1;
+  }
+  if (tar_extract_blocking(archive, staging) != 0) {
+    int saved = errno;
+    tar_remove_tree(staging);
+    errno = saved;
+    return -1;
+  }
+  if (tar_remove_tree(dest) != 0 || rename(staging, dest) != 0) {
+    int saved = errno;
+    tar_remove_tree(staging);
+    errno = saved;
+    return -1;
+  }
+  return 0;
+}
+
 static void tar_extract_call(IoWork* w) {
   TarExtract* g = (TarExtract*)w->data;
-  io_sys_end(w, tar_extract_blocking(g->archive, g->dest));
+  io_sys_end(w, tar_extract_atomic(g->archive, g->dest));
 }
 
 static Term tar_extract_pack(Env e, IoWork* w) {

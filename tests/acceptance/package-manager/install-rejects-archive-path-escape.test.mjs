@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import { KnotTestHome } from "../../support/home.mjs";
 import { runProcess } from "../../support/process.mjs";
 import { startRegistry } from "../../support/registry.mjs";
 import { makeWorkspace, removeWorkspace } from "../../support/workspace.mjs";
@@ -28,6 +29,9 @@ test("install rejects a tarball whose paths escape the extract root", async (t) 
   });
   t.after(() => registry.close());
   const registryUrl = await registry.url();
+  const home = await KnotTestHome.create(t);
+  const env = KnotTestHome.env(home);
+
 
   const workspace = await makeWorkspace({
     "package.json": JSON.stringify({
@@ -42,6 +46,7 @@ test("install rejects a tarball whose paths escape the extract root", async (t) 
 
   const install = await runProcess(knot, ["install", "--registry", registryUrl], {
     cwd: workspace,
+    env,
     timeoutMs: 60_000,
   });
   assert.notEqual(install.status, 0);
@@ -49,6 +54,13 @@ test("install rejects a tarball whose paths escape the extract root", async (t) 
   assert.equal(existsSync(path.join(workspace, "node_modules", probe)), false);
   assert.equal(existsSync(path.join(workspace, "node_modules", ".knot", probe)), false);
   assert.equal(existsSync(path.join(workspace, "..", probe)), false);
+  const repeated = await runProcess(knot, ["install", "--registry", registryUrl], {
+    cwd: workspace,
+    env,
+    timeoutMs: 60_000,
+  });
+  assert.notEqual(repeated.status, 0);
+
 
   const imported = await runProcess(process.execPath, [
     "--input-type=module",

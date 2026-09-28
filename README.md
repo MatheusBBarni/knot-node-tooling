@@ -147,7 +147,7 @@ The package manager is designed around these safety boundaries:
 - Fail explicitly instead of falling back to npm, pnpm, Bun, or another tool.
 
 Benchmark methodology and limitations are recorded in [`benchmark/package-manager/`](./benchmark/package-manager/).
-Those measurements compare cached rematerialization on a specific fixture, not cold installs or identical lock graphs.
+The repeated measurements compare cached rematerialization on a specific fixture, and the resolver experiment separately records one cold-metadata run with its cache and graph limitations.
 
 ## Compilation and bundling
 

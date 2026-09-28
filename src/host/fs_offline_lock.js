@@ -98,6 +98,7 @@ function fs_offline_lock() {
           }
           const key = integrity.replaceAll("/", "_");
           const unp = p.join(home, ".knot/unpacked", key);
+          if (!fs.existsSync(`${unp}.complete`)) throw new Error("missing unpacked package");
           materialize(unp, dest);
           fs_layout_pkg(dest, name);
         }
