@@ -72,7 +72,7 @@ static int offline_one(
     errno = ENAMETOOLONG;
     return -1;
   }
-  if (snprintf(unp_pkg, sizeof(unp_pkg), "%s/package.json", unp) >= (int)sizeof(unp_pkg)) {
+  if (snprintf(unp_pkg, sizeof(unp_pkg), "%s.complete", unp) >= (int)sizeof(unp_pkg)) {
     errno = ENAMETOOLONG;
     return -1;
   }

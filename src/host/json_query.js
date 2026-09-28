@@ -34,9 +34,21 @@ function json_query(text, path, mode) {
       }
       return io_done(cur.join("\n"));
     }
+    if (mode === "raw") {
+      return io_done(JSON.stringify(cur));
+    }
     return io_fail(22);
 
   } catch {
     return io_fail(22);
+  }
+}
+
+function json_query_file(file, path, mode) {
+  try {
+    const fs = require("fs");
+    return json_query(fs.readFileSync(file, "utf8"), path, mode);
+  } catch {
+    return io_fail(2);
   }
 }

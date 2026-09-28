@@ -393,6 +393,7 @@ static int json_keys(JsonP* p, char* out, size_t out_n) {
 
 static int json_undep_keys(JsonP* p, char* out, size_t out_n) {
   json_ws(p);
+  JsonP all = *p;
   if (!json_lit(p, "{")) {
     return 0;
   }
@@ -432,6 +433,10 @@ static int json_undep_keys(JsonP* p, char* out, size_t out_n) {
     }
     if (p->at < p->end && *p->at == '}') {
       p->at += 1;
+      if (n == 0) {
+        *p = all;
+        return json_keys(p, out, out_n);
+      }
       return 1;
     }
     p->err = 1;
@@ -475,6 +480,22 @@ static int json_lines(JsonP* p, char* out, size_t out_n) {
     p->err = 1;
     return 0;
   }
+}
+
+static int json_raw(JsonP* p, char* out, size_t out_n) {
+  json_ws(p);
+  const char* start = p->at;
+  if (!json_skip(p)) {
+    return 0;
+  }
+  size_t n = (size_t)(p->at - start);
+  if (n + 1 > out_n) {
+    p->err = 1;
+    return 0;
+  }
+  memcpy(out, start, n);
+  out[n] = 0;
+  return 1;
 }
 
 static int json_query(const char* text, const char* path, const char* mode,
@@ -523,6 +544,13 @@ static int json_query(const char* text, const char* path, const char* mode,
     }
     return 0;
   }
+  if (strcmp(mode, "raw") == 0) {
+    if (!json_raw(&p, out, out_n)) {
+      errno = ENOENT;
+      return -1;
+    }
+    return 0;
+  }
   errno = EINVAL;
   return -1;
 
@@ -530,13 +558,53 @@ static int json_query(const char* text, const char* path, const char* mode,
 
 typedef struct {
   char* text;
+  char* file;
   char* path;
   char* mode;
   char* out;
 } JsonQuery;
 
+static char* json_query_read_file(const char* path) {
+  FILE* f = fopen(path, "rb");
+  if (f == NULL) {
+    return NULL;
+  }
+  if (fseek(f, 0, SEEK_END) != 0) {
+    fclose(f);
+    return NULL;
+  }
+  long size = ftell(f);
+  if (size < 0 || size > (32 << 20) || fseek(f, 0, SEEK_SET) != 0) {
+    fclose(f);
+    errno = size > (32 << 20) ? EFBIG : EIO;
+    return NULL;
+  }
+  char* text = malloc((size_t)size + 1);
+  if (text == NULL) {
+    fclose(f);
+    errno = ENOMEM;
+    return NULL;
+  }
+  if (fread(text, 1, (size_t)size, f) != (size_t)size) {
+    free(text);
+    fclose(f);
+    errno = EIO;
+    return NULL;
+  }
+  text[size] = 0;
+  fclose(f);
+  return text;
+}
+
 static void json_query_call(IoWork* w) {
   JsonQuery* g = (JsonQuery*)w->data;
+  if (g->file != NULL) {
+    g->text = json_query_read_file(g->file);
+    if (g->text == NULL) {
+      io_sys_end(w, -1);
+      return;
+    }
+  }
   io_sys_end(w, json_query(g->text, g->path, g->mode, g->out, 1 << 20));
 }
 
@@ -545,6 +613,7 @@ static Term json_query_pack(Env e, IoWork* w) {
   Term r = w->code != 0 ? io_fail(e, w->code, NULL)
     : io_done(e, io_str(e, g->out, strlen(g->out)));
   free(g->text);
+  free(g->file);
   free(g->path);
   free(g->mode);
   free(g->out);
@@ -558,6 +627,7 @@ Term json_query_run(Env e, Term* f, IoWork* w) {
   uint64_t n3 = 0;
   JsonQuery* g = io_mem(malloc(sizeof(JsonQuery)));
   g->text = io_cstr(e, f[0], &n1);
+  g->file = NULL;
   g->path = io_cstr(e, f[1], &n2);
   g->mode = io_cstr(e, f[2], &n3);
   g->out = io_mem(malloc(1 << 20));
@@ -570,6 +640,26 @@ Term json_query_run(Env e, Term* f, IoWork* w) {
   return io_work(w, json_query_call, json_query_pack);
 }
 
+Term json_query_file_run(Env e, Term* f, IoWork* w) {
+  uint64_t n1 = 0;
+  uint64_t n2 = 0;
+  uint64_t n3 = 0;
+  JsonQuery* g = io_mem(malloc(sizeof(JsonQuery)));
+  g->text = NULL;
+  g->file = io_cstr(e, f[0], &n1);
+  g->path = io_cstr(e, f[1], &n2);
+  g->mode = io_cstr(e, f[2], &n3);
+  g->out = io_mem(malloc(1 << 20));
+  g->out[0] = 0;
+  w->data = (char*)g;
+  if (io_nul(g->file, n1) || io_nul(g->path, n2) || io_nul(g->mode, n3)) {
+    w->code = EINVAL;
+    return json_query_pack(e, w);
+  }
+  return io_work(w, json_query_call, json_query_pack);
+}
+
 static void __attribute__((constructor)) json_query_use(void) {
   io_eff(CID_JSON_QUERY, json_query_run, 0);
+  io_eff(CID_JSON_QUERY_FILE, json_query_file_run, 0);
 }

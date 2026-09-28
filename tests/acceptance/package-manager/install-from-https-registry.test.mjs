@@ -4,6 +4,7 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import https from "node:https";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { gzipSync } from "node:zlib";
 import test from "node:test";
 import { npmTarball, sriSha512 } from "../../support/registry.mjs";
 import { runProcess } from "../../support/process.mjs";
@@ -48,10 +49,22 @@ test("install downloads one package from an HTTPS registry and lets Node.js impo
   });
   const integrity = sriSha512(tarball);
   const tarballPath = `/${pkgName}/-/${pkgName}-1.0.0.tgz`;
+  let metadataGets = 0;
 
   const tlsServer = https.createServer({ key, cert }, (req, res) => {
     if (req.method === "GET" && req.url === `/${pkgName}`) {
-      const body = JSON.stringify({
+      if (!req.headers["accept-encoding"]?.includes("gzip")) {
+        res.writeHead(406);
+        res.end();
+        return;
+      }
+      metadataGets += 1;
+      if (metadataGets === 1) {
+        res.writeHead(503);
+        res.end();
+        return;
+      }
+      const body = gzipSync(JSON.stringify({
         name: pkgName,
         "dist-tags": { latest: "1.0.0" },
         versions: {
@@ -64,10 +77,11 @@ test("install downloads one package from an HTTPS registry and lets Node.js impo
             },
           },
         },
-      });
+      }));
       res.writeHead(200, {
         "content-type": "application/vnd.npm.install-v1+json",
-        "content-length": Buffer.byteLength(body),
+        "content-encoding": "gzip",
+        "content-length": body.length,
       });
       res.end(body);
       return;

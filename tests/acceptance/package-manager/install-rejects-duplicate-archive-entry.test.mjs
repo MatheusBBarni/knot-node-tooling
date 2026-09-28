@@ -3,6 +3,7 @@ import http from "node:http";
 import path from "node:path";
 import test from "node:test";
 import { gzipSync } from "node:zlib";
+import { KnotTestHome } from "../../support/home.mjs";
 import { sriSha512 } from "../../support/registry.mjs";
 import { runProcess } from "../../support/process.mjs";
 import { makeWorkspace, removeWorkspace } from "../../support/workspace.mjs";
@@ -112,6 +113,9 @@ test("install rejects a tarball with a duplicate archive path", async (t) => {
     });
   }));
   const registryUrl = `http://127.0.0.1:${port}`;
+  const home = await KnotTestHome.create(t);
+  const env = KnotTestHome.env(home);
+
 
   const workspace = await makeWorkspace({
     "package.json": JSON.stringify({
@@ -126,8 +130,16 @@ test("install rejects a tarball with a duplicate archive path", async (t) => {
 
   const install = await runProcess(knot, ["install", "--registry", registryUrl], {
     cwd: workspace,
+    env,
     timeoutMs: 60_000,
   });
   assert.notEqual(install.status, 0);
   assert.match(install.stderr, /duplicate_entry/);
+  const repeated = await runProcess(knot, ["install", "--registry", registryUrl], {
+    cwd: workspace,
+    env,
+    timeoutMs: 60_000,
+  });
+  assert.notEqual(repeated.status, 0);
+  assert.match(repeated.stderr, /duplicate_entry/);
 });

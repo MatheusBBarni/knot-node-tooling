@@ -74,6 +74,26 @@ Knot linked two more packages, but the lock graphs differ, so this is not a same
 Before package materialization was parallelized, the same investigation measured Knot at 36.83 ms median and bun at 28.72 ms median over seven runs.
 The optimization reduced Knot's measured median by about 33%.
 
+## Cold metadata resolver experiment
+
+On 2026-09-28, a separate one-run experiment repeated the reported slow path with the same spec-finder manifest.
+The project had no `knot.lock`, the registry metadata cache was removed, and the verified tarball and unpacked stores remained warm.
+
+| Knot build | Packages linked | Process wall time | Knot-reported time |
+| --- | ---: | ---: | ---: |
+| Before metadata pipeline optimization | 31 | 19.7 s | 19.7 s |
+| After metadata pipeline optimization | 31 | 5.46 s | 5.4 s |
+
+The measured process wall time fell by about 72% in this run.
+The optimized resolver fetches up to sixteen independent metadata documents concurrently, requests compressed HTTPS responses with bounded retries, writes those responses directly to the metadata cache, and queries large cached packuments without converting the complete document into a Bend string.
+It extracts the selected version object once so later policy and artifact queries operate on the bounded version record instead of repeatedly scanning the complete packument.
+
+The reported Bun run completed in 2.50 s and linked 29 packages.
+This is not a normalized cold-cache comparison.
+`bun pm cache rm` removed Bun's package cache, while `knot cache clean` removed only registry metadata and retained Knot's verified package stores.
+The tools also resolved different dependency graphs.
+Use these numbers to track the Knot regression and optimization, not to claim same-work parity.
+
 ## Notes
 
 The locked-install host adapter parses the lockfile once, rematerializes independent packages across at most eight worker threads, then emits progress in lockfile order.
@@ -87,10 +107,10 @@ Knot clonefiles unpacked trees from `~/.knot/unpacked` into `node_modules/.knot`
 Bun uses its own store and linker.
 The layouts are not the same, so a faster time is not proof of a better installer overall.
 
-## Not measured
+## Not measured by the repeated-run table
 
-- Cold caches
-- First resolve from the registry
+- Fully cold equivalent-store installs
+- A repeated cold metadata comparison with median and p95
 - `--offline`
 - Lifecycle scripts
 - Workspaces with more than this package.json

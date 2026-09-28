@@ -12,6 +12,7 @@
 typedef struct {
   char* url;
   char* dest;
+  int metadata;
 } HttpGetFile;
 
 static int http_mkdir_parent(char* path) {
@@ -75,13 +76,19 @@ static int http_parse(const char* url, char* host, size_t host_n, int* port,
   return 0;
 }
 
-static int https_get_file_curl(const char* url, const char* dest) {
+static int https_get_file_curl(const char* url, const char* dest, int metadata) {
   pid_t pid = fork();
   if (pid < 0) {
     return -1;
   }
   if (pid == 0) {
-    execlp("curl", "curl", "-fsSL", "--max-time", "60", "-o", dest, url, (char*)0);
+    if (metadata) {
+      execlp("curl", "curl", "-fsSL", "--compressed", "--retry", "2", "--retry-all-errors",
+        "--retry-delay", "0", "--retry-max-time", "60", "--connect-timeout", "10", "--max-time", "30", "-H",
+        "Accept: application/vnd.npm.install-v1+json", "-o", dest, url, (char*)0);
+    } else {
+      execlp("curl", "curl", "-fsSL", "--max-time", "60", "-o", dest, url, (char*)0);
+    }
     _exit(127);
   }
   int st = 0;
@@ -95,7 +102,7 @@ static int https_get_file_curl(const char* url, const char* dest) {
   return -1;
 }
 
-static int http_get_file_blocking(const char* url, const char* dest) {
+static int http_get_file_blocking(const char* url, const char* dest, int metadata) {
   if (strncmp(url, "https://", 8) == 0) {
     char dest_copy[4096];
     if (strlen(dest) >= sizeof(dest_copy)) {
@@ -106,7 +113,7 @@ static int http_get_file_blocking(const char* url, const char* dest) {
     if (http_mkdir_parent(dest_copy) != 0) {
       return -1;
     }
-    return https_get_file_curl(url, dest);
+    return https_get_file_curl(url, dest, metadata);
   }
   char host[256];
   char path[2048];
@@ -235,7 +242,7 @@ static int http_get_file_blocking(const char* url, const char* dest) {
 
 static void http_get_file_call(IoWork* w) {
   HttpGetFile* g = (HttpGetFile*)w->data;
-  io_sys_end(w, http_get_file_blocking(g->url, g->dest));
+  io_sys_end(w, http_get_file_blocking(g->url, g->dest, g->metadata));
 }
 
 static Term http_get_file_pack(Env e, IoWork* w) {
@@ -254,6 +261,22 @@ Term http_get_file_run(Env e, Term* f, IoWork* w) {
   HttpGetFile* g = io_mem(malloc(sizeof(HttpGetFile)));
   g->url = io_cstr(e, f[0], &n1);
   g->dest = io_cstr(e, f[1], &n2);
+  g->metadata = 0;
+  w->data = (char*)g;
+  if (io_nul(g->url, n1) || io_nul(g->dest, n2)) {
+    w->code = EINVAL;
+    return http_get_file_pack(e, w);
+  }
+  return io_work(w, http_get_file_call, http_get_file_pack);
+}
+
+Term http_get_meta_file_run(Env e, Term* f, IoWork* w) {
+  uint64_t n1 = 0;
+  uint64_t n2 = 0;
+  HttpGetFile* g = io_mem(malloc(sizeof(HttpGetFile)));
+  g->url = io_cstr(e, f[0], &n1);
+  g->dest = io_cstr(e, f[1], &n2);
+  g->metadata = 1;
   w->data = (char*)g;
   if (io_nul(g->url, n1) || io_nul(g->dest, n2)) {
     w->code = EINVAL;
@@ -264,4 +287,5 @@ Term http_get_file_run(Env e, Term* f, IoWork* w) {
 
 static void __attribute__((constructor)) http_get_file_use(void) {
   io_eff(CID_HTTP_GET_FILE, http_get_file_run, 0);
+  io_eff(CID_HTTP_GET_META_FILE, http_get_meta_file_run, 0);
 }
