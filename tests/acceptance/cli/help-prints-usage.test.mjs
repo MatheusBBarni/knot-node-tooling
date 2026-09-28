@@ -12,6 +12,7 @@ test("knot --help prints usage and listed commands", async () => {
   assert.match(result.stdout, /Usage:/);
   assert.match(result.stdout, /install/);
   assert.match(result.stdout, /cache clean/);
+  assert.match(result.stdout, /--upgrade/);
 });
 
 test("knot -h prints usage", async () => {

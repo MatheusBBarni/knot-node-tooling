@@ -30,6 +30,12 @@ def Fs.layout_pkg(dest: String, name: String) ->
   import "./host/fs_layout_pkg.c"
   import "./host/fs_layout_pkg.js"
 
+def Fs.replace_dir(src: String, dst: String) ->
+  IO(Result<&1, &1, U32 & String, Unit>):
+  import "./host/fs_replace_dir.c"
+  import "./host/fs_replace_dir.js"
+
+
 def Fs.offline_lock() -> IO(Result<&1, &1, U32 & String, String>):
   import "./host/fs_offline_lock.c"
   import "./host/fs_offline_lock.js"
@@ -37,6 +43,11 @@ def Fs.offline_lock() -> IO(Result<&1, &1, U32 & String, String>):
 def Fs.unlink(path: String) -> IO(Result<&1, &1, U32 & String, Unit>):
   import "./host/fs_unlink.c"
   import "./host/fs_unlink.js"
+
+def Fs.remove_dir(path: String) ->
+  IO(Result<&1, &1, U32 & String, Unit>):
+  import "./host/fs_remove_dir.c"
+  import "./host/fs_remove_dir.js"
 def Fs.rename(src: String, dst: String) ->
   IO(Result<&1, &1, U32 & String, Unit>):
   import "./host/fs_rename.c"
@@ -69,6 +80,11 @@ def Os.exec(cmd: String, arg: String, cwd: String) ->
   import "./host/os_exec.c"
   import "./host/os_exec.js"
 
+def Os.exec_many(cmd: String, args: String, cwd: String) ->
+  IO(Result<&1, &1, U32 & String, String>):
+  import "./host/os_exec_many.c"
+  import "./host/os_exec_many.js"
+
 
 
 def Http.get_file(url: String, dest: String) ->
@@ -84,6 +100,9 @@ def Gzip.inflate_file(path: String) -> IO(Result<&1, &1, U32 & String, String>):
 def Hash.sha512_b64(path: String) -> IO(Result<&1, &1, U32 & String, String>):
   import "./host/hash_sha512_b64.c"
   import "./host/hash_sha512_b64.js"
+def Hash.sha256_b64(path: String) -> IO(Result<&1, &1, U32 & String, String>):
+  import "./host/hash_sha256_b64.c"
+  import "./host/hash_sha256_b64.js"
 
 def Tar.extract(archive: String, dest: String) ->
   IO(Result<&1, &1, U32 & String, Unit>):
@@ -656,19 +675,26 @@ def ensure_unpacked(has: Bool, +tar: String, +unpacked: String) -> IO(Unit):
     case False{}:
       extract_pkg(tar, unpacked)
 
-def place_pkg(+tar: String, +dest: String, +integrity: String) -> IO(Unit):
+def place_pkg_mode(+unp: String, +dest: String, replace: Bool) -> IO(Unit):
+  match replace:
+    case True{}:
+      IO.try(Unit, Fs.replace_dir(unp, dest))
+    case False{}:
+      IO.try(Unit, Fs.clone_dir(unp, dest))
+
+def place_pkg(+tar: String, +dest: String, +integrity: String, replace: Bool) -> IO(Unit):
   do IO<Unit>:
     +unp : String <- unpacked_path(integrity)
     has : Bool <- file_exists(unp ++ "/package.json")
     ensure_unpacked(has, tar, unp)
-    IO.try(Unit, Fs.clone_dir(unp, dest))
+    place_pkg_mode(unp, dest, replace)
 
-def materialize_verified(ok: Bool, +tar: String, +dest: String, +integrity: String) -> IO(Unit):
+def materialize_verified(ok: Bool, +tar: String, +dest: String, +integrity: String, replace: Bool) -> IO(Unit):
   match ok:
     case False{}:
       die_integrity()
     case True{}:
-      place_pkg(tar, dest, integrity)
+      place_pkg(tar, dest, integrity, replace)
 
 def fetch_tar(+url: String, +tmp: String, +cas: String, exists: Bool) -> IO(String):
   match exists:
@@ -1144,7 +1170,22 @@ def load_meta(hit: Bool, +path: String, +url: String) -> IO(Maybe<&2, String>):
     case False{}:
       load_meta_fresh(path, url)
 
-def materialize_pkg(
+def materialize_pkg_fetch(
+  +tarball: String,
+  +tar_path: String,
+  +cas: String,
+  +dest: String,
+  +integrity: String,
+  replace: Bool
+) -> IO(Unit):
+  do IO<Unit>:
+    +ex : Bool <- file_exists(cas)
+    +tar_use : String <- fetch_tar(tarball, tar_path, cas, ex)
+    got : String <- IO.try(String, Hash.sha512_b64(tar_use))
+    materialize_verified(sri_ok(got, integrity), tar_use, dest, integrity, replace)
+    commit_cas(tar_use, cas, ex)
+
+def materialize_pkg_existing(
   exists: Bool,
   +tarball: String,
   +tar_path: String,
@@ -1156,12 +1197,22 @@ def materialize_pkg(
     case True{}:
       IO.pure(Unit, Unit{})
     case False{}:
-      do IO<Unit>:
-        +ex : Bool <- file_exists(cas)
-        +tar_use : String <- fetch_tar(tarball, tar_path, cas, ex)
-        got : String <- IO.try(String, Hash.sha512_b64(tar_use))
-        materialize_verified(sri_ok(got, integrity), tar_use, dest, integrity)
-        commit_cas(tar_use, cas, ex)
+      materialize_pkg_fetch(tarball, tar_path, cas, dest, integrity, False{})
+
+def materialize_pkg(
+  exists: Bool,
+  +tarball: String,
+  +tar_path: String,
+  +cas: String,
+  +dest: String,
+  +integrity: String,
+  replace: Bool
+) -> IO(Unit):
+  match replace:
+    case True{}:
+      materialize_pkg_fetch(tarball, tar_path, cas, dest, integrity, True{})
+    case False{}:
+      materialize_pkg_existing(exists, tarball, tar_path, cas, dest, integrity)
 
 
 def already(+seen: String, +name: String) -> Bool:
@@ -1185,7 +1236,8 @@ def install_job(
   +optional: Bool,
   +os_checked: Bool,
   +seen: String,
-  +hit: Bool
+  +hit: Bool,
+  +force: Bool
 ) -> IO(List<&2, String>):
   match fuel:
     case 0n:
@@ -1197,9 +1249,9 @@ def install_job(
             case Nil{}:
               IO.pure(List<&2, String>, Nil{})
             case Con{SNil{}, rest}:
-              install_job(p, Nil{}, rest, registry, None{}, False{}, False{}, seen, False{})
+              install_job(p, Nil{}, rest, registry, None{}, False{}, False{}, seen, False{}, force)
             case Con{+line, rest}:
-              install_job(p, String.split(line, '\t'), rest, registry, None{}, String.contains(line, "\topt"), False{}, seen, parts_hit(seen, String.split(line, '\t')))
+              install_job(p, String.split(line, '\t'), rest, registry, None{}, String.contains(line, "\topt"), False{}, seen, parts_hit(seen, String.split(line, '\t')), force)
         case Con{+name, Con{+spec, +tail}}:
           match meta_m:
             case None{}:
@@ -1207,18 +1259,18 @@ def install_job(
                 case True{}:
                   do IO<List<&2, String>>:
                     link_root_if(name, is_root_parts(tail))
-                    install_job(p, Nil{}, queue, registry, None{}, False{}, False{}, seen, False{})
+                    install_job(p, Nil{}, queue, registry, None{}, False{}, False{}, seen, False{}, force)
                 case False{}:
                   do IO<List<&2, String>>:
                     +reg : String <- registry_for(registry, name)
                     +path : String <- cache_path(reg, name)
                     ex : Bool <- file_exists(path)
                     got : Maybe<&2, String> <- load_meta(ex, path, reg ++ "/" ++ name)
-                    install_job(p, Con{name, Con{spec, tail}}, queue, registry, got, optional, False{}, seen ++ name ++ "\n", False{})
+                    install_job(p, Con{name, Con{spec, tail}}, queue, registry, got, optional, False{}, seen ++ name ++ "\n", False{}, force)
             case Some{SNil{}}:
               match optional:
                 case True{}:
-                  install_job(p, Nil{}, queue, registry, None{}, False{}, False{}, seen, False{})
+                  install_job(p, Nil{}, queue, registry, None{}, False{}, False{}, seen, False{}, force)
                 case False{}:
                   IO.die(List<&2, String>, 1, "knot: registry HTTP error")
             case Some{+meta}:
@@ -1235,7 +1287,7 @@ def install_job(
                     arch : String <- IO.try(String, Os.arch())
                     eng : String <- json_optional_string(meta, "versions/" ++ picked ++ "/engines/node")
                     check_engine(eng)
-                    install_job(p, Con{name, Con{spec, tail}}, queue, registry, os_meta_or_skip(meta, Bool.and(os_allowed(osf, plat), os_allowed(cpf, arch))), optional, True{}, seen, False{})
+                    install_job(p, Con{name, Con{spec, tail}}, queue, registry, os_meta_or_skip(meta, Bool.and(os_allowed(osf, plat), os_allowed(cpf, arch))), optional, True{}, seen, False{}, force)
 
                 case True{}:
                   do IO<List<&2, String>>:
@@ -1252,14 +1304,14 @@ def install_job(
                     +integrity : String <- need_integrity(raw_int)
                     +cas : String <- cas_file(integrity)
                     +ex_pkg : Bool <- file_exists(dest ++ "/package.json")
-                    u_m : Unit <- materialize_pkg(ex_pkg, tarball, tar_path, cas, dest, integrity)
+                    u_m : Unit <- materialize_pkg(ex_pkg, tarball, tar_path, cas, dest, integrity, force)
                     u_log : Unit <- progress("+ " ++ name ++ "@" ++ picked)
                     +nested_txt : String <- read_text(dest ++ "/package.json")
                     run_approved_scripts(name, dest, nested_txt)
 
                     +req : String <- join_nested_deps(nested_txt)
                     +opt : String <- json_optional_pairs(nested_txt, "optionalDependencies")
-                    more : List<&2, String> <- install_job(p, Nil{}, List.append(&2, String, mark_nested_lines(String.lines(req)), List.append(&2, String, mark_optional_lines(String.lines(opt)), queue)), registry, None{}, False{}, False{}, seen, False{})
+                    more : List<&2, String> <- install_job(p, Nil{}, List.append(&2, String, mark_nested_lines(String.lines(req)), List.append(&2, String, mark_optional_lines(String.lines(opt)), queue)), registry, None{}, False{}, False{}, seen, False{}, force)
                     link_children(dest, String.lines(req))
                     link_children(dest, String.lines(opt))
                     link_root_if(name, is_root_parts(tail))
@@ -1288,7 +1340,7 @@ def offline_finish(+name: String, +dest: String) -> IO(Unit):
 
 def offline_from_cas(+name: String, +cas: String, +dest: String, +integrity: String) -> IO(Unit):
   do IO<Unit>:
-    place_pkg(cas, dest, integrity)
+    place_pkg(cas, dest, integrity, False{})
     offline_finish(name, dest)
 
 def offline_from_url(+name: String, +cas: String, +dest: String, +integrity: String, +tarball: String) -> IO(Unit):
@@ -1301,7 +1353,7 @@ def offline_from_url(+name: String, +cas: String, +dest: String, +integrity: Str
         +tmp : String = "node_modules/.knot-tmp/offline.tgz"
         +tar_use : String <- fetch_tar(tarball, tmp, cas, False{})
         got : String <- IO.try(String, Hash.sha512_b64(tar_use))
-        materialize_verified(sri_ok(got, integrity), tar_use, dest, integrity)
+        materialize_verified(sri_ok(got, integrity), tar_use, dest, integrity, False{})
         commit_cas(tar_use, cas, False{})
         offline_finish(name, dest)
 
@@ -2099,12 +2151,12 @@ def run_install_locked() -> IO(Unit):
     end : Nat <- IO.now()
     progress(format_elapsed(Nat.sub(end, start)))
 
-def run_install_resolve(+registry: String, +pairs: String, +text: String) -> IO(Unit):
+def run_install_resolve(+registry: String, +pairs: String, +text: String, force: Bool) -> IO(Unit):
   do IO<Unit>:
     start : Nat <- IO.now()
     ws : String <- json_optional_lines(text, "workspaces")
     pairs2 : String <- link_workspaces(8n, String.lines(ws), pairs)
-    +recs : List<&2, String> <- install_job(256n, Nil{}, String.lines(pairs2), registry, None{}, False{}, False{}, "\n", False{})
+    +recs : List<&2, String> <- install_job(256n, Nil{}, String.lines(pairs2), registry, None{}, False{}, False{}, "\n", False{}, force)
     u_sum : Unit <- progress(Nat.show(List.length(&2, String, recs)) ++ " packages installed")
     write_text("knot.lock", render_lock(List.sort(~String, ~lock_le, recs)))
     end : Nat <- IO.now()
@@ -2115,12 +2167,12 @@ def run_install_covered(ok: Bool, +registry: String, +pairs: String, +text: Stri
     case True{}:
       run_install_locked()
     case False{}:
-      run_install_resolve(registry, pairs, text)
+      run_install_resolve(registry, pairs, text, False{})
 
 def run_install_has(has: Bool, +registry: String, +pairs: String, +text: String) -> IO(Unit):
   match has:
     case False{}:
-      run_install_resolve(registry, pairs, text)
+      run_install_resolve(registry, pairs, text, False{})
     case True{}:
       do IO<Unit>:
         lock : String <- read_text("knot.lock")
@@ -2206,6 +2258,42 @@ def run_install(args: List<&2, String>) -> IO(Unit):
   do IO<Unit>:
     parsed : String & Bool & Bool <- parse_install_args(args)
     run_install_parsed(parsed)
+
+def run_update_resolve(dry: Bool, +registry: String, +pairs: String, +text: String) -> IO(Unit):
+  match dry:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      run_install_resolve(registry, pairs, text, True{})
+
+def run_update_frozen(dry: Bool, frozen: Bool, +registry: String, +pairs: String, +text: String) -> IO(Unit):
+  match frozen:
+    case True{}:
+      IO.die(Unit, 2, "knot update cannot use a frozen lockfile (frozen_update)")
+    case False{}:
+      run_update_resolve(dry, registry, pairs, text)
+
+def run_update_flags(dry: Bool, frozen: Bool, offline: Bool, +registry: String, +pairs: String, +text: String) -> IO(Unit):
+  match offline:
+    case True{}:
+      IO.die(Unit, 2, "knot update cannot run offline (offline_update)")
+    case False{}:
+      run_update_frozen(dry, frozen, registry, pairs, text)
+
+def run_update_parsed(parsed: String & Bool & Bool) -> IO(Unit):
+  (registry, frozen, offline) = parsed
+  do IO<Unit>:
+    +text : String <- read_text("package.json")
+    prod : Bool <- file_exists(".knot/production")
+    dry : Bool <- file_exists(".knot/dry-run")
+    +pairs : String <- install_pairs(prod, text)
+    check_protocols(32n, String.lines(pairs))
+    run_update_flags(dry, frozen, offline, registry, pairs, text)
+
+def run_update(args: List<&2, String>) -> IO(Unit):
+  do IO<Unit>:
+    parsed : String & Bool & Bool <- parse_install_args(args)
+    run_update_parsed(parsed)
 
 def render_app_json(+app: String, +dep: String, +ver: String) -> String:
   "{\n  \"name\": \"" ++ app ++ "\",\n  \"type\": \"module\",\n  \"dependencies\": {\n    \"" ++ dep ++ "\": \"" ++ ver ++ "\"\n  }\n}\n"
@@ -2359,7 +2447,7 @@ def dispatch_cache(+cmd: String, rest: List<&2, String>, is_cache: Bool) -> IO(U
 def dispatch_update(+cmd: String, rest: List<&2, String>, is_update: Bool) -> IO(Unit):
   match is_update:
     case True{}:
-      run_install(rest)
+      run_update(rest)
     case False{}:
       dispatch_cache(cmd, rest, String.eq(cmd, "cache"))
 
@@ -2544,15 +2632,26 @@ def transpile_write_js_none(none: Bool, +jsp: String, +js: String) -> IO(Unit):
     case False{}:
       write_text_atomic(jsp, js ++ "\n//# sourceMappingURL=" ++ Compiler.basename(jsp) ++ ".map\n")
 
-def transpile_write_js_ext(ext: Bool, +jsp: String, +js: String, +sm: String) -> IO(Unit):
+def transpile_write_js_inline(inline: Bool, +jsp: String, +js: String, +map: String) -> IO(Unit):
+  match inline:
+    case True{}:
+      write_text_atomic(jsp, js ++ "\n//# sourceMappingURL=data:application/json;base64," ++ Compiler.b64_encode(map) ++ "\n")
+    case False{}:
+      IO.pure(Unit, Unit{})
+
+def transpile_write_js_ext(ext: Bool, inline: Bool, +jsp: String, +js: String, +map: String, +sm: String) -> IO(Unit):
   match ext:
     case True{}:
       write_text_atomic(jsp, js ++ "\n")
     case False{}:
-      transpile_write_js_none(String.eq(sm, "none"), jsp, js)
+      match inline:
+        case True{}:
+          transpile_write_js_inline(True{}, jsp, js, map)
+        case False{}:
+          transpile_write_js_none(String.eq(sm, "none"), jsp, js)
 
-def transpile_write_js(+jsp: String, +js: String, +sm: String) -> IO(Unit):
-  transpile_write_js_ext(String.eq(sm, "external"), jsp, js, sm)
+def transpile_write_js(+jsp: String, +js: String, +map: String, +sm: String) -> IO(Unit):
+  transpile_write_js_ext(String.eq(sm, "external"), String.eq(sm, "inline"), jsp, js, map, sm)
 
 def transpile_write_map_none(none: Bool, +jsp: String, +map: String) -> IO(Unit):
   match none:
@@ -2562,13 +2661,13 @@ def transpile_write_map_none(none: Bool, +jsp: String, +map: String) -> IO(Unit)
       write_text_atomic(jsp ++ ".map", map)
 
 def transpile_write_map(+jsp: String, +map: String, +sm: String) -> IO(Unit):
-  transpile_write_map_none(String.eq(sm, "none"), jsp, map)
+  transpile_write_map_none(Bool.or(String.eq(sm, "none"), String.eq(sm, "inline")), jsp, map)
 
-def transpile_ok_to(+jsp: String, js: String, map: String, +sm: String) -> IO(Unit):
+def transpile_ok_to(+jsp: String, js: String, +map: String, +sm: String) -> IO(Unit):
   do IO<Unit>:
     u0 : Unit <- IO.try(Unit, Fs.mkdir_p(Compiler.dirname(jsp)))
     u1 : Unit <- IO.try(Unit, Fs.mkdir_p(".knot/build-cache"))
-    u2 : Unit <- transpile_write_js(jsp, js, sm)
+    u2 : Unit <- transpile_write_js(jsp, js, map, sm)
     u3 : Unit <- transpile_write_map(jsp, map, sm)
     write_text_atomic(".knot/build-cache/v1", "2")
 
@@ -2616,12 +2715,12 @@ def transpile_cache_output_map_mode(none: Bool, +jsp: String) -> IO(Bool):
     case False{}:
       file_exists(jsp ++ ".map")
 
-def transpile_cache_output_map(sm: String, +jsp: String, js: Bool) -> IO(Bool):
+def transpile_cache_output_map(+sm: String, +jsp: String, js: Bool) -> IO(Bool):
   match js:
     case False{}:
       IO.pure(Bool, False{})
     case True{}:
-      transpile_cache_output_map_mode(String.eq(sm, "none"), jsp)
+      transpile_cache_output_map_mode(Bool.or(String.eq(sm, "none"), String.eq(sm, "inline")), jsp)
 
 def transpile_one_src_ex(+file: String, +src: String, ex: Bool, +sm: String, +key: String) -> IO(Unit):
   match ex:
@@ -2778,7 +2877,7 @@ def run_transpile_h(+head: String, rest: List<&2, String>, mw: Bool, +mode: Stri
     case _:
       match b0:
         case True{}:
-          IO.die(Unit, 2, "knot: --sourcemap requires linked|external|none (missing_input)")
+          IO.die(Unit, 2, "knot: --sourcemap requires linked|external|inline|none (missing_input)")
         case False{}:
           match b1:
             case True{}:
@@ -2907,8 +3006,52 @@ def analyze_resolve_rel(rel: Bool, +importer: String, +spec: String) -> IO(Strin
 def analyze_resolve(+importer: String, +spec: String) -> IO(String):
   analyze_resolve_rel(Compiler.is_rel(spec), importer, spec)
 
-def analyze_mod_json(+file: String, imports: List<&2, String>, exports: List<&2, String>) -> String:
-  "{\"file\":" ++ Compiler.json_str(file) ++ ",\"imports\":" ++ Compiler.json_list(imports) ++ ",\"exports\":" ++ Compiler.json_list(exports) ++ "}"
+def analyze_edge_one(+kind: String, +spec: String) -> String:
+  "{\"kind\":" ++ Compiler.json_str(kind) ++ ",\"specifier\":" ++ Compiler.json_str(spec) ++ "}"
+
+def analyze_edge_body(+kind: String, specs: List<&2, String>) -> String:
+  match specs:
+    case Nil{}:
+      ""
+    case Con{+h, Nil{}}:
+      analyze_edge_one(kind, h)
+    case Con{+h, rest}:
+      analyze_edge_one(kind, h) ++ "," ++ analyze_edge_body(kind, rest)
+
+def analyze_edge_join(+left: String, +right: String, left_empty: Bool, right_empty: Bool) -> String:
+  match left_empty:
+    case True{}:
+      right
+    case False{}:
+      match right_empty:
+        case True{}:
+          left
+        case False{}:
+          left ++ "," ++ right
+
+def analyze_edges_json(
+  imports: List<&2, String>, dynamics: List<&2, String>, requires: List<&2, String>
+) -> String:
+  +static_body : String = analyze_edge_body("static-import", imports)
+  +dynamic_body : String = analyze_edge_body("dynamic-import", dynamics)
+  +require_body : String = analyze_edge_body("require", requires)
+  +static_empty : Bool = String.is_empty(static_body)
+  +dynamic_empty : Bool = String.is_empty(dynamic_body)
+  +require_empty : Bool = String.is_empty(require_body)
+  +first_empty : Bool = Bool.and(static_empty, dynamic_empty)
+  +first : String = analyze_edge_join(static_body, dynamic_body, static_empty, dynamic_empty)
+  body : String = analyze_edge_join(first, require_body, first_empty, require_empty)
+  "[" ++ body ++ "]"
+
+def analyze_mod_json(
+  +file: String,
+  +imports: List<&2, String>,
+  exports: List<&2, String>,
+  +dynamics: List<&2, String>,
+  +requires: List<&2, String>
+) -> String:
+  "{\"file\":" ++ Compiler.json_str(file) ++ ",\"imports\":" ++ Compiler.json_list(imports) ++ ",\"exports\":" ++ Compiler.json_list(exports) ++ ",\"edges\":" ++ analyze_edges_json(imports, dynamics, requires) ++ "}"
+
 
 def analyze_mods_go(xs: List<&2, String>) -> String:
   match xs:
@@ -2955,6 +3098,13 @@ def analyze_miss_add(+miss: List<&2, String>, +spec: String, empty: Bool) -> Lis
     case False{}:
       miss
 
+def analyze_list_cat(xs: List<&2, String>, ys: List<&2, String>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      ys
+    case Con{h, t}:
+      Con{h, analyze_list_cat(t, ys)}
+
 @unsafe def analyze_go(sel: Nat, +file: String, imps: List<&2, String>, +visited: List<&2, String>, +mods: List<&2, String>, +miss: List<&2, String>, seen: Bool, empty: Bool, +spec: String, +path: String, st: List<&2, String> & List<&2, String> & List<&2, String>) -> IO(List<&2, String> & List<&2, String> & List<&2, String>):
   match sel:
     case 0n:
@@ -2966,9 +3116,12 @@ def analyze_miss_add(+miss: List<&2, String>, +spec: String, empty: Bool) -> Lis
             raw : String <- read_text(file)
             +src : String <- normalize_source(raw)
             +imps2 : List<&2, String> = Compiler.imports_of(src)
+            +dyns2 : List<&2, String> = Compiler.dyn_imports_of(src)
+            +reqs2 : List<&2, String> = Compiler.requires_of(src)
             +exps : List<&2, String> = Compiler.exports_of(src)
-            +mod : String = analyze_mod_json(file, imps2, exps)
-            analyze_go(1n, file, imps2, analyze_app(visited, file), analyze_app(mods, mod), miss, False{}, False{}, "", "", (Nil{}, Nil{}, Nil{}))
+            +mod : String = analyze_mod_json(file, imps2, exps, dyns2, reqs2)
+            +walk : List<&2, String> = analyze_list_cat(imps2, analyze_list_cat(dyns2, reqs2))
+            analyze_go(1n, file, walk, analyze_app(visited, file), analyze_app(mods, mod), miss, False{}, False{}, "", "", (Nil{}, Nil{}, Nil{}))
     case 1n:
       match imps:
         case Nil{}:
@@ -3094,7 +3247,7 @@ def bundle_concat_empty(a: String, b: String, empty: Bool) -> String:
     case True{}:
       b
     case False{}:
-      a ++ "\n" ++ b
+      a ++ "\n;\n" ++ b
 
 def bundle_concat(+a: String, b: String) -> String:
   bundle_concat_empty(a, b, String.is_empty(a))
@@ -3429,6 +3582,194 @@ def list_app(xs: List<&2, String>, x: String) -> List<&2, String>:
     case Con{h, t}:
       Con{h, list_app(t, x)}
 
+
+
+@unsafe def list_rev_go(sel: Nat, +xs: List<&2, String>, +acc: List<&2, String>) -> List<&2, String>:
+  match sel:
+    case 0n:
+      match xs:
+        case Nil{}:
+          acc
+        case Con{+h, t}:
+          list_rev_go(0n, t, Con{h, acc})
+    case _:
+      acc
+def list_rev(+xs: List<&2, String>) -> List<&2, String>:
+  list_rev_go(0n, xs, Nil{})
+def take_until_semicolon(+s: String, +acc: String) -> String:
+  match s:
+    case SNil{}:
+      acc
+    case SCon{';', _}:
+      acc
+    case SCon{h, t}:
+      take_until_semicolon(t, acc ++ SCon{h, SNil{}})
+def take_until_equals(+s: String, +acc: String) -> String:
+  match s:
+    case SNil{}:
+      acc
+    case SCon{'=', _}:
+      acc
+    case SCon{h, t}:
+      take_until_equals(t, acc ++ SCon{h, SNil{}})
+
+def loader_extension(+loader: String) -> String:
+  take_until_equals(loader, "")
+
+def loader_is_text(+file: String, +loader: String) -> Bool:
+  Bool.and(String.ends_with(loader, "=text"), String.ends_with(file, loader_extension(loader)))
+
+def drop_last_early_kind(+s: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      ""
+    case False{}:
+      String.take(s, Nat.sub(String.length(s), 1n))
+
+def drop_last_early(+s: String) -> String:
+  drop_last_early_kind(s, String.is_empty(s))
+
+
+def external_marker_kind(+value: String, +packages: String, explicit: Bool, external_packages: Bool) -> String:
+  match explicit:
+    case True{}:
+      value
+    case False{}:
+      match external_packages:
+        case True{}:
+          "*"
+        case False{}:
+          ""
+
+def external_marker(+conds: String) -> String:
+  +tail : String = drop_until_key(conds, ";external=")
+  +value : String = take_until_semicolon(tail, "")
+  +packages_tail : String = drop_until_key(conds, ";packages=")
+  +packages : String = take_until_semicolon(packages_tail, "")
+  external_marker_kind(value, packages, String.contains(conds, ";external="), String.eq(packages, "external"))
+
+def external_conds_kind(+conds: String, +external: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      conds
+    case False{}:
+      conds ++ ";external=" ++ external
+
+def external_conds(+conds: String, +format: String) -> String:
+  +external : String = external_marker(format)
+  external_conds_kind(conds, external, String.is_empty(external))
+
+def external_spec_kind(+external: String, +spec: String, wildcard: Bool) -> Bool:
+  match wildcard:
+    case True{}:
+      Bool.and(
+        Bool.not(String.starts_with(spec, "./")),
+        Bool.and(
+          Bool.not(String.starts_with(spec, "../")),
+          Bool.and(Bool.not(String.starts_with(spec, "/")), Bool.not(String.starts_with(spec, "#")))))
+    case False{}:
+      Bool.or(String.eq(external, spec), String.starts_with(spec, external ++ "/"))
+
+def external_spec(+external: String, +spec: String) -> Bool:
+  external_spec_kind(external, spec, String.eq(external, "*"))
+
+@unsafe def filter_external_go(sel: Nat, +specs: List<&2, String>, +external: String, +acc: List<&2, String>, +head: String, external_hit: Bool) -> List<&2, String>:
+  match sel:
+    case 0n:
+      match specs:
+        case Nil{}:
+          list_rev(acc)
+        case Con{+h, t}:
+          filter_external_go(1n, t, external, acc, h, external_spec(external, h))
+    case _:
+      match external_hit:
+        case True{}:
+          filter_external_go(0n, specs, external, acc, "", False{})
+        case False{}:
+          filter_external_go(0n, specs, external, Con{head, acc}, "", False{})
+
+def collect_imports_conds_kind(+imports: List<&2, String>, +external: String, empty: Bool) -> List<&2, String>:
+  match empty:
+    case True{}:
+      imports
+    case False{}:
+      filter_external_go(0n, imports, external, Nil{}, "", False{})
+
+
+def collect_imports_kind(+file: String, +src: String, module: Bool) -> List<&2, String>:
+  match module:
+    case True{}:
+      Nil{}
+    case False{}:
+      Compiler.imports_of(src)
+
+def collect_imports(+file: String, +src: String) -> List<&2, String>:
+  collect_imports_kind(file, src, String.ends_with(file, ".module.css"))
+def collect_imports_conds(+file: String, +src: String, +conds: String) -> List<&2, String>:
+  +imports : List<&2, String> = collect_imports(file, src)
+  +external : String = external_marker(conds)
+  collect_imports_conds_kind(imports, external, String.is_empty(external))
+def external_line_spec_kind(+line: String, +external: String, wildcard: Bool) -> Bool:
+  match wildcard:
+    case True{}:
+      Bool.and(
+        String.contains(line, "\""),
+        Bool.and(
+          Bool.not(String.contains(line, "\"./")),
+          Bool.and(
+            Bool.not(String.contains(line, "\"../")),
+            Bool.and(Bool.not(String.contains(line, "\"/")), Bool.not(String.contains(line, "\"#"))))))
+    case False{}:
+      Bool.or(String.contains(line, "\"" ++ external ++ "\""), String.contains(line, "\"" ++ external ++ "/"))
+
+def external_line_spec(+line: String, +external: String) -> Bool:
+  external_line_spec_kind(line, external, String.eq(external, "*"))
+
+def external_import_line_kind(+line: String, +external: String, hit: Bool) -> Bool:
+  match hit:
+    case True{}:
+      external_line_spec(line, external)
+    case False{}:
+      False{}
+
+def external_import_line(+line: String, +external: String) -> Bool:
+  external_import_line_kind(line, external, Bool.or(String.starts_with(line, "import "), String.starts_with(line, "export ")))
+def external_import_piece_kind(+line: String, semicolon: Bool) -> String:
+  match semicolon:
+    case True{}:
+      take_until_semicolon(line, "") ++ ";"
+    case False{}:
+      line
+
+def external_import_piece(+line: String) -> String:
+  external_import_piece_kind(line, String.contains(line, ";"))
+
+
+@unsafe def external_imports_go(sel: Nat, +lines: List<&2, String>, +external: String, +acc: String, +line: String, hit: Bool) -> String:
+  match sel:
+    case 0n:
+      match lines:
+        case Nil{}:
+          acc
+        case Con{+h, t}:
+          external_imports_go(1n, t, external, acc, h, external_import_line(h, external))
+    case _:
+      match hit:
+        case True{}:
+          external_imports_go(0n, lines, external, acc ++ external_import_piece(line) ++ "\n", "", False{})
+        case False{}:
+          external_imports_go(0n, lines, external, acc, "", False{})
+
+def external_imports_kind(+src: String, +external: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      ""
+    case False{}:
+      external_imports_go(0n, String.lines(src), external, "", "", False{})
+
+def external_imports(+src: String, +external: String) -> String:
+  external_imports_kind(src, external, String.is_empty(external))
+
 @unsafe def collect_go(sel: Nat, +file: String, imps: List<&2, String>, +visited: List<&2, String>, seen: Bool, +conds: String) -> IO(List<&2, String>):
   match sel:
     case 0n:
@@ -3439,7 +3780,7 @@ def list_app(xs: List<&2, String>, x: String) -> List<&2, String>:
           do IO<List<&2, String>>:
             raw : String <- read_text(file)
             src : String <- normalize_source(raw)
-            vis2 : List<&2, String> <- collect_go(1n, file, Compiler.imports_of(src), visited, False{}, conds)
+            vis2 : List<&2, String> <- collect_go(1n, file, collect_imports_conds(file, src, conds), visited, False{}, conds)
             return list_app(vis2, file)
     case _:
       match imps:
@@ -3471,20 +3812,34 @@ def live_imports_of(+src: String) -> IO(List<&2, String>):
     live_imports_res(r)
 
 
+def is_asset_file(+f: String) -> Bool:
+  Bool.or(String.ends_with(f, ".png"), Bool.or(String.ends_with(f, ".jpg"), Bool.or(String.ends_with(f, ".jpeg"), Bool.or(String.ends_with(f, ".gif"), Bool.or(String.ends_with(f, ".webp"), Bool.or(String.ends_with(f, ".woff"), Bool.or(String.ends_with(f, ".woff2"), Bool.or(String.ends_with(f, ".ttf"), Bool.or(String.ends_with(f, ".eot"), String.ends_with(f, ".avif"))))))))))
+
+@unsafe def collect_keep_go(sel: Nat, +files: List<&2, String>, +f: String, asset: Bool) -> IO(List<&2, String>):
+  match sel:
+    case 0n:
+      match files:
+        case Nil{}:
+          IO.pure(List<&2, String>, Nil{})
+        case Con{+h, rest}:
+          collect_keep_go(1n, rest, h, is_asset_file(h))
+    case _:
+      match asset:
+        case True{}:
+          collect_keep_go(0n, files, "", False{})
+        case False{}:
+          do IO<List<&2, String>>:
+            raw : String <- read_text(f)
+            src : String <- normalize_source(raw)
+            names : List<&2, String> <- live_imports_of(src)
+            raw2 : String <- read_text(f)
+            src2 : String <- normalize_source(raw2)
+            local : List<&2, String> = Compiler.non_export_function_names_of(src2)
+            more : List<&2, String> <- collect_keep_go(0n, files, "", False{})
+            return strs_cat(names, strs_cat(local, more))
+
 def collect_keep(files: List<&2, String>) -> IO(List<&2, String>):
-  match files:
-    case Nil{}:
-      IO.pure(List<&2, String>, Nil{})
-    case Con{+f, rest}:
-      do IO<List<&2, String>>:
-        raw : String <- read_text(f)
-        src : String <- normalize_source(raw)
-        names : List<&2, String> <- live_imports_of(src)
-        raw2 : String <- read_text(f)
-        src2 : String <- normalize_source(raw2)
-        local : List<&2, String> = Compiler.non_export_function_names_of(src2)
-        more : List<&2, String> <- collect_keep(rest)
-        return strs_cat(names, strs_cat(local, more))
+  collect_keep_go(0n, files, "", False{})
 
 def se_flag_trim(+s: String) -> String:
   String.take(s, 1n)
@@ -3519,43 +3874,1128 @@ def export_names_of(+src: String) -> List<&2, String>:
         case False{}:
           has_any_keep(0n, names, keep, False{})
 
-def emit_one_go(+f: String, +src: String, +keep: List<&2, String>, +shake: Bool, drop: Bool) -> IO(String):
+def css_default_binding(+f: String) -> String:
+  +base : String = Compiler.basename(f)
+  "__knot_default_" ++ String.take(base, Nat.sub(String.length(base), 11n))
+
+
+def default_alias_lines(pairs: List<&2, String>, +acc: String) -> String:
+  match pairs:
+    case Nil{}:
+      acc
+    case Con{+pair, rest}:
+      +name : String = Compiler.default_import_name(pair)
+      +binding : String = Compiler.default_import_binding(pair)
+      default_alias_lines(rest, acc ++ "const " ++ name ++ " = " ++ binding ++ ";\n")
+
+def emit_one_go(+f: String, +src: String, +keep: List<&2, String>, +shake: Bool, drop: Bool, minify: Bool, ids: Bool) -> IO(String):
   match drop:
     case True{}:
       IO.pure(String, "")
     case False{}:
-      bundle_js(f, Compiler.transpile_bundle_keep(f, src, keep, shake))
+      do IO<String>:
+        +aliases : String = default_alias_lines(Compiler.default_imports_of(src), "")
+        js : String <- bundle_js(f, Compiler.transpile_bundle_opt(f, src, keep, shake, minify, ids))
+        return aliases ++ js
+def emit_one_drop(+f: String, +src: String, +keep: List<&2, String>, +shake: Bool, pure: Bool, minify: Bool, ids: Bool) -> IO(String):
+  emit_one_go(f, src, keep, shake, Bool.and(shake, Bool.and(pure, Bool.not(has_any_keep(0n, export_names_of(src), keep, False{})))), minify, ids)
 
-def emit_one_drop(+f: String, +src: String, +keep: List<&2, String>, +shake: Bool, pure: Bool) -> IO(String):
-  emit_one_go(f, src, keep, shake, Bool.and(shake, Bool.and(pure, Bool.not(has_any_keep(0n, export_names_of(src), keep, False{})))))
+def emit_one_se(+f: String, +src: String, +keep: List<&2, String>, +shake: Bool, +se: String, minify: Bool, ids: Bool) -> IO(String):
+  emit_one_drop(f, src, keep, shake, String.eq(se, "0"), minify, ids)
 
-def emit_one_se(+f: String, +src: String, +keep: List<&2, String>, +shake: Bool, +se: String) -> IO(String):
-  emit_one_drop(f, src, keep, shake, String.eq(se, "0"))
 
-def emit_one(+f: String, +keep: List<&2, String>, +shake: Bool) -> IO(String):
+def css_module_char_ok(c: Char) -> Bool:
+  match c:
+    case ' ':
+      False{}
+    case '\t':
+      False{}
+    case '\n':
+      False{}
+    case '\r':
+      False{}
+    case '{':
+      False{}
+    case '}':
+      False{}
+    case ':':
+      False{}
+    case ',':
+      False{}
+    case ';':
+      False{}
+    case '.':
+      False{}
+    case '#':
+      False{}
+    case '(':
+      False{}
+    case ')':
+      False{}
+    case _:
+      True{}
+
+@unsafe def css_module_take_go(sel: Nat, +s: String, +acc: String, c: Char, ok: Bool) -> String:
+  match sel:
+    case 0n:
+      match s:
+        case SNil{}:
+          acc
+        case SCon{+h, t}:
+          css_module_take_go(1n, t, acc, h, css_module_char_ok(h))
+    case _:
+      match ok:
+        case True{}:
+          css_module_take_go(0n, s, acc ++ SCon{c, SNil{}}, 'a', False{})
+        case False{}:
+          acc
+
+def css_module_take(+s: String) -> String:
+  css_module_take_go(0n, s, "", 'a', False{})
+
+def css_module_name_state_kind(empty: Bool) -> Nat:
+  match empty:
+    case True{}:
+      2n
+    case False{}:
+      3n
+
+def css_module_name_state(+name: String) -> Nat:
+  css_module_name_state_kind(String.is_empty(name))
+
+def css_module_add_kind(+name: String, +acc: List<&2, String>, seen: Bool) -> List<&2, String>:
+  match seen:
+    case True{}:
+      acc
+    case False{}:
+      list_app(acc, name)
+
+def css_module_add(+name: String, +acc: List<&2, String>) -> List<&2, String>:
+  css_module_add_kind(name, acc, has_file(0n, acc, name, False{}))
+
+@unsafe def css_module_names_go(sel: Nat, +rest: String, +acc: List<&2, String>, +after: String, +name: String, +tail: String, found: Bool) -> List<&2, String>:
+  match sel:
+    case 0n:
+      +next_after : String = drop_until_key(rest, ".")
+      css_module_names_go(1n, rest, acc, next_after, "", "", String.contains(rest, "."))
+    case 1n+p:
+      match p:
+        case 0n:
+          match found:
+            case False{}:
+              acc
+            case True{}:
+              +next_name : String = css_module_take(after)
+              +next_tail : String = String.drop(after, String.length(next_name))
+              css_module_names_go(css_module_name_state(next_name), rest, acc, after, next_name, next_tail, True{})
+        case 1n+p2:
+          match p2:
+            case 0n:
+              css_module_names_go(0n, String.drop(after, 1n), acc, "", "", "", False{})
+            case _:
+              css_module_names_go(0n, tail, css_module_add(name, acc), "", "", "", False{})
+
+def css_module_names_cross_kind(+raw: String, +after: String, from: Bool) -> List<&2, String>:
+  match from:
+    case True{}:
+      css_module_names_go(0n, String.take(raw, Nat.sub(String.length(raw), String.length(after))), Nil{}, "", "", "", False{})
+    case False{}:
+      css_module_names_go(0n, raw, Nil{}, "", "", "", False{})
+
+def css_module_names(+raw: String) -> List<&2, String>:
+  +after : String = drop_until_key(raw, " from \"")
+  css_module_names_cross_kind(raw, after, String.contains(raw, " from \""))
+
+
+@unsafe def css_module_replace_scan(sel: Nat, +hay: String, +needle: String, +replacement: String, found: Bool, empty: Bool) -> String:
+  match sel:
+    case 0n:
+      css_module_replace_scan(1n, hay, needle, replacement, String.starts_with(hay, needle), False{})
+    case 1n+p:
+      match p:
+        case 0n:
+          match found:
+            case True{}:
+              replacement ++ String.drop(hay, String.length(needle))
+            case False{}:
+              css_module_replace_scan(2n, hay, needle, replacement, False{}, String.is_empty(hay))
+        case 1n+p2:
+          match empty:
+            case True{}:
+              ""
+            case False{}:
+              String.take(hay, 1n) ++ css_module_replace_scan(0n, String.drop(hay, 1n), needle, replacement, False{}, False{})
+
+@unsafe def css_module_replace_go(sel: Nat, +hay: String, +needle: String, +replacement: String, found: Bool) -> String:
+  match sel:
+    case 0n:
+      css_module_replace_go(1n, hay, needle, replacement, String.contains(hay, needle))
+    case _:
+      match found:
+        case True{}:
+          css_module_replace_go(0n, css_module_replace_scan(0n, hay, needle, replacement, False{}, False{}), needle, replacement, False{})
+        case False{}:
+          hay
+
+def css_module_replace_names(+names: List<&2, String>, +raw: String, +prefix: String) -> String:
+  match names:
+    case Nil{}:
+      raw
+    case Con{+name, rest}:
+      css_module_replace_names(rest, css_module_replace_scan(0n, raw, "." ++ name, "." ++ prefix ++ name, False{}, False{}), prefix)
+
+def css_module_prefix(+file: String) -> String:
+  +base : String = Compiler.basename(file)
+  String.take(base, Nat.sub(String.length(base), 11n)) ++ "_"
+
+@unsafe def css_module_until_go(sel: Nat, +s: String, +target: Char, +acc: String, c: Char, hit: Bool) -> String:
+  match sel:
+    case 0n:
+      match s:
+        case SNil{}:
+          acc
+        case SCon{+h, t}:
+          css_module_until_go(1n, t, target, acc, h, Char.is_eq(h, target))
+    case _:
+      match hit:
+        case True{}:
+          acc
+        case False{}:
+          css_module_until_go(0n, s, target, acc ++ SCon{c, SNil{}}, 'a', False{})
+
+def css_module_until(+s: String, target: Char) -> String:
+  css_module_until_go(0n, s, target, "", 'a', False{})
+
+def css_module_compose_ref_kind(+body: String, +after: String, found: Bool) -> String:
+  match found:
+    case True{}:
+      css_module_until(after, ';')
+    case False{}:
+      ""
+
+def css_module_compose_ref(+raw: String, +name: String) -> String:
+  +body : String = css_module_until(drop_until_key(raw, "." ++ name), '}')
+  +needle : String = "composes: "
+  +after : String = drop_until_key(body, needle)
+  css_module_compose_ref_kind(body, after, String.contains(body, needle))
+def css_module_compose_name_parts(parts: List<&2, String>) -> String:
+  match parts:
+    case Nil{}:
+      ""
+    case Con{+name, _}:
+      name
+
+def css_module_compose_name(+compose: String) -> String:
+  css_module_compose_name_parts(String.split(compose, ' '))
+
+def css_module_compose_local_kind(+compose: String, from: Bool) -> String:
+  match from:
+    case True{}:
+      css_module_compose_name(compose)
+    case False{}:
+      compose
+
+def css_module_compose_local(+compose: String) -> String:
+  css_module_compose_local_kind(compose, String.contains(compose, " from "))
+
+def css_module_from_ref_kind(+compose: String, from: Bool) -> String:
+  match from:
+    case True{}:
+      css_module_until(drop_until_key(compose, "from \""), '"')
+    case False{}:
+      ""
+
+def css_module_from_ref(+compose: String) -> String:
+  css_module_from_ref_kind(compose, String.contains(compose, "from \""))
+
+def css_module_cross_path_kind(+file: String, +ref: String, empty: Bool) -> IO(String):
+  match empty:
+    case True{}:
+      IO.pure(String, "")
+    case False{}:
+      IO.pure(String, Compiler.resolve_rel(file, ref))
+
+def css_module_cross_path(+file: String, +raw: String) -> IO(String):
+  +compose : String = drop_until_key(raw, "composes: ")
+  +ref : String = css_module_from_ref(compose)
+  css_module_cross_path_kind(file, ref, String.is_empty(ref))
+
+@unsafe def css_module_cycle_go(sel: Nat, fuel: Nat, +file: String, +raw: String, +root: String, +path: String, empty: Bool, equal: Bool) -> IO(Bool):
+  match sel:
+    case 0n:
+      match fuel:
+        case 0n:
+          IO.pure(Bool, False{})
+        case 1n+n:
+          do IO<Bool>:
+            +next_path : String <- css_module_cross_path(file, raw)
+            css_module_cycle_go(1n, n, file, raw, root, next_path, String.is_empty(next_path), String.eq(next_path, root))
+    case _:
+      match empty:
+        case True{}:
+          IO.pure(Bool, False{})
+        case False{}:
+          match equal:
+            case True{}:
+              IO.pure(Bool, True{})
+            case False{}:
+              do IO<Bool>:
+                +next : String <- read_text(path)
+                css_module_cycle_go(0n, fuel, path, next, root, "", True{}, False{})
+
+def css_module_cycle(+file: String, +raw: String) -> IO(Bool):
+  css_module_cycle_go(0n, 16n, file, raw, file, "", True{}, False{})
+def css_module_value_kind(+name: String, +prefix: String, +compose: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      prefix ++ name
+    case False{}:
+      prefix ++ name ++ " " ++ prefix ++ compose
+
+def css_module_value(+name: String, +prefix: String, +raw: String) -> String:
+  +compose : String = css_module_compose_local(css_module_compose_ref(raw, name))
+  css_module_value_kind(name, prefix, compose, String.is_empty(compose))
+
+def css_module_value_cross(+file: String, +raw: String, +name: String, +prefix: String, +compose: String, empty: Bool) -> IO(String):
+  match empty:
+    case True{}:
+      IO.pure(String, css_module_value(name, prefix, raw))
+    case False{}:
+      do IO<String>:
+        +ref : String = css_module_from_ref(compose)
+        +path : String = Compiler.resolve_rel(file, ref)
+        imported : String <- read_text(path)
+        +imported_name : String = css_module_compose_name(compose)
+        +value : String = css_module_value(imported_name, css_module_prefix(path), imported)
+        return prefix ++ name ++ " " ++ value
+
+def css_module_export_value(+file: String, +raw: String, +name: String, +prefix: String) -> IO(String):
+  +compose : String = css_module_compose_ref(raw, name)
+  css_module_value_cross(file, raw, name, prefix, compose, String.is_empty(css_module_from_ref(compose)))
+def css_module_strip_one_kind(+raw: String, +compose: String, +empty: Bool) -> String:
+  match empty:
+    case True{}:
+      raw
+    case False{}:
+      css_module_replace_go(0n, raw, "composes: " ++ compose ++ ";", "", False{})
+
+def css_module_strip_composes(+names: List<&2, String>, +raw: String) -> String:
+  match names:
+    case Nil{}:
+      raw
+    case Con{+name, rest}:
+      +compose : String = css_module_compose_ref(raw, name)
+      +next : String = css_module_strip_one_kind(raw, compose, String.is_empty(compose))
+      css_module_strip_composes(rest, next)
+
+def css_module_map_next(+acc: String, +piece: String, first: Bool) -> String:
+  match first:
+    case True{}:
+      piece
+    case False{}:
+      acc ++ "," ++ piece
+
+@unsafe def css_module_map_go_io(+names: List<&2, String>, +file: String, +prefix: String, +raw: String, +acc: String, first: Bool) -> IO(String):
+  match names:
+    case Nil{}:
+      IO.pure(String, acc)
+    case Con{+name, rest}:
+      do IO<String>:
+        +value : String <- css_module_export_value(file, raw, name, prefix)
+        +piece : String = Compiler.json_str(name) ++ ":" ++ Compiler.json_str(value)
+        +next : String = css_module_map_next(acc, piece, first)
+        css_module_map_go_io(rest, file, prefix, raw, next, False{})
+
+def css_module_js_cycle(cycle: Bool, +file: String, +raw: String) -> IO(String):
+  match cycle:
+    case True{}:
+      IO.die(String, 1, "knot: CSS Modules composition cycle (css_module_cycle)")
+    case False{}:
+      +names : List<&2, String> = css_module_names(raw)
+      +prefix : String = css_module_prefix(file)
+      do IO<String>:
+        +map : String <- css_module_map_go_io(names, file, prefix, raw, "", True{})
+        return "const " ++ css_default_binding(file) ++ " = {" ++ map ++ "};\n"
+def css_module_cross_name(+raw: String) -> String:
+  css_module_take(drop_until_key(raw, "."))
+
+def css_module_cross_compose(+raw: String) -> String:
+  css_module_until(drop_until_key(raw, "composes: "), ';')
+
+def css_module_raw_cross(+file: String, +raw: String) -> String:
+  +name : String = css_module_cross_name(raw)
+  +compose : String = css_module_cross_compose(raw)
+  +stripped : String = css_module_replace_go(0n, raw, "composes: " ++ compose ++ ";", "", False{})
+  css_module_replace_scan(0n, stripped, "." ++ name, "." ++ css_module_prefix(file) ++ name, False{}, False{})
+
+def css_module_js_cross(+file: String, +raw: String) -> IO(String):
+  do IO<String>:
+    +name : String = css_module_cross_name(raw)
+    +compose : String = css_module_cross_compose(raw)
+    +ref : String = css_module_from_ref(compose)
+    +path : String = Compiler.resolve_rel(file, ref)
+    imported : String <- read_text(path)
+    +imported_name : String = css_module_compose_name(compose)
+    +value : String = css_module_value(imported_name, css_module_prefix(path), imported)
+    return "const " ++ css_default_binding(file) ++ " = {" ++ Compiler.json_str(name) ++ ":" ++ Compiler.json_str(css_module_prefix(file) ++ name ++ " " ++ value) ++ "};\n"
+
+def css_module_js_cross_cycle(cycle: Bool, +file: String, +raw: String) -> IO(String):
+  match cycle:
+    case True{}:
+      IO.die(String, 1, "knot: CSS Modules composition cycle (css_module_cycle)")
+    case False{}:
+      css_module_js_cross(file, raw)
+
+def css_module_js_kind(cross: Bool, +file: String, +raw: String) -> IO(String):
+  match cross:
+    case True{}:
+      do IO<String>:
+        +cycle : Bool <- css_module_cycle(file, raw)
+        css_module_js_cross_cycle(cycle, file, raw)
+    case False{}:
+      do IO<String>:
+        +cycle : Bool <- css_module_cycle(file, raw)
+        css_module_js_cycle(cycle, file, raw)
+
+def css_module_js(+file: String, +raw: String) -> IO(String):
+  css_module_js_kind(String.contains(raw, " from \""), file, raw)
+
+def css_module_raw_module_kind(+file: String, +raw: String, cross: Bool) -> String:
+  match cross:
+    case True{}:
+      css_module_raw_cross(file, raw)
+    case False{}:
+      +stripped : String = css_module_strip_composes(css_module_names(raw), raw)
+      css_module_replace_names(css_module_names(stripped), stripped, css_module_prefix(file))
+
+def css_module_raw_kind(+file: String, +raw: String, module: Bool) -> String:
+  match module:
+    case True{}:
+      css_module_raw_module_kind(file, raw, String.contains(raw, " from \""))
+    case False{}:
+      raw
+
+
+def css_module_import_css_kind(+path: String, +imported: String, empty: Bool) -> IO(String):
+  match empty:
+    case True{}:
+      IO.pure(String, "")
+    case False{}:
+      IO.pure(String, css_module_raw_kind(path, imported, True{}))
+
+def css_module_import_css_path(+path: String, empty: Bool) -> IO(String):
+  match empty:
+    case True{}:
+      IO.pure(String, "")
+    case False{}:
+      do IO<String>:
+        imported : String <- read_text(path)
+        css_module_import_css_kind(path, imported, False{})
+
+def css_module_import_css(+file: String, +raw: String) -> IO(String):
+  do IO<String>:
+    +path : String <- css_module_cross_path(file, raw)
+    css_module_import_css_path(path, String.is_empty(path))
+
+def css_minify_pair(+css: String, +token: String) -> String:
+  +left : String = css_module_replace_go(0n, css, " " ++ token, token, False{})
+  css_module_replace_go(0n, left, token ++ " ", token, False{})
+
+@unsafe def css_minify_spaces_go(sel: Nat, +css: String, found: Bool) -> String:
+  match sel:
+    case 0n:
+      css_minify_spaces_go(1n, css, String.contains(css, "  "))
+    case _:
+      match found:
+        case True{}:
+          css_minify_spaces_go(0n, css_module_replace_go(0n, css, "  ", " ", False{}), False{})
+        case False{}:
+          css
+
+@unsafe def css_strip_comments_go(sel: Nat, +s: String, +acc: String, inside: Bool, c: Char, open: Bool, close: Bool) -> String:
+  match sel:
+    case 0n:
+      match s:
+        case SNil{}:
+          acc
+        case SCon{+h, t}:
+          css_strip_comments_go(1n, t, acc, inside, h, String.starts_with(s, "/*"), String.starts_with(s, "*/"))
+    case _:
+      match inside:
+        case True{}:
+          match close:
+            case True{}:
+              css_strip_comments_go(0n, String.drop(s, 1n), acc, False{}, 'a', False{}, False{})
+            case False{}:
+              css_strip_comments_go(0n, s, acc, True{}, c, False{}, False{})
+        case False{}:
+          match open:
+            case True{}:
+              css_strip_comments_go(0n, String.drop(s, 1n), acc, True{}, 'a', False{}, False{})
+            case False{}:
+              css_strip_comments_go(0n, s, acc ++ SCon{c, SNil{}}, False{}, 'a', False{}, False{})
+
+def css_strip_comments(+css: String) -> String:
+  css_strip_comments_go(0n, css, "", False{}, 'a', False{}, False{})
+
+def css_minify_zero_values(+css: String) -> String:
+  +a : String = css_module_replace_go(0n, css, "0px", "0", False{})
+  +b : String = css_module_replace_go(0n, a, "0em", "0", False{})
+  +c : String = css_module_replace_go(0n, b, "0rem", "0", False{})
+  css_module_replace_go(0n, c, "0%", "0", False{})
+
+def css_minify(+css: String) -> String:
+  +comments : String = css_strip_comments(css)
+  +lines : String = css_module_replace_go(0n, comments, "\r", "", False{})
+  +tabs : String = css_module_replace_go(0n, lines, "\t", " ", False{})
+  +spaces : String = css_minify_spaces_go(0n, tabs, False{})
+  +brace0 : String = css_minify_pair(spaces, "{")
+  +brace1 : String = css_minify_pair(brace0, "}")
+  +colon : String = css_minify_pair(brace1, ":")
+  +semicolon : String = css_minify_pair(colon, ";")
+  +comma : String = css_minify_pair(semicolon, ",")
+  +greater : String = css_minify_pair(comma, ">")
+  +zero : String = css_minify_zero_values(greater)
+  css_module_replace_go(0n, zero, "\n", "", False{})
+
+def css_minify_kind(+css: String, minify: Bool) -> String:
+  match minify:
+    case True{}:
+      css_minify(css)
+    case False{}:
+      css
+
+def emit_json(+file: String, +raw: String) -> IO(String):
+  IO.pure(String, "const __knot_default_value = " ++ raw ++ ";\n")
+
+def emit_text(+raw: String) -> IO(String):
+  IO.pure(String, "const __knot_default_value = " ++ Compiler.json_str(raw) ++ ";\n")
+
+def asset_public_url_join(+public: String, +name: String, slash: Bool) -> String:
+  match slash:
+    case True{}:
+      public ++ name
+    case False{}:
+      public ++ "/" ++ name
+
+def asset_public_url_kind(+public: String, +name: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      name
+    case False{}:
+      asset_public_url_join(public, name, String.ends_with(public, "/"))
+
+def asset_public_url(+public: String, +name: String) -> String:
+  asset_public_url_kind(public, name, String.is_empty(public))
+
+def emit_asset(+file: String) -> IO(String):
+  IO.pure(String, "const __knot_default_value = " ++ Compiler.json_str(Compiler.basename(file)) ++ ";\n")
+
+def emit_css_kind(+f: String, +raw: String, module: Bool) -> IO(String):
+  match module:
+    case True{}:
+      css_module_js(f, raw)
+    case False{}:
+      IO.pure(String, "")
+
+
+def emit_one_asset_kind(+f: String, +raw: String, +keep: List<&2, String>, +shake: Bool, asset: Bool, minify: Bool, ids: Bool) -> IO(String):
+  match asset:
+    case True{}:
+      emit_asset(f)
+    case False{}:
+      do IO<String>:
+        src : String <- ts_prep(f, raw)
+        se : String <- se_flag_of(f)
+        emit_one_se(f, src, keep, shake, se, minify, ids)
+def loader_is_json(+file: String, +loader: String) -> Bool:
+  Bool.or(String.ends_with(file, ".json"), String.ends_with(loader, "=json"))
+
+def loader_is_file(+file: String, +loader: String) -> Bool:
+  Bool.or(is_asset_file(file), String.ends_with(loader, "=file"))
+
+def emit_one_loader_kind(+f: String, +raw: String, +keep: List<&2, String>, +shake: Bool, loader_text: Bool, asset: Bool, minify: Bool, ids: Bool) -> IO(String):
+  match loader_text:
+    case True{}:
+      emit_text(raw)
+    case False{}:
+      emit_one_asset_kind(f, raw, keep, shake, asset, minify, ids)
+
+def emit_one_text_branch(+f: String, +raw: String, +keep: List<&2, String>, +shake: Bool, text: Bool, +loader: String, asset: Bool, minify: Bool, ids: Bool) -> IO(String):
+  match text:
+    case True{}:
+      emit_text(raw)
+    case False{}:
+      emit_one_loader_kind(f, raw, keep, shake, loader_is_text(f, loader), asset, minify, ids)
+
+def emit_one_kind(+f: String, +raw: String, +keep: List<&2, String>, +shake: Bool, json: Bool, css: Bool, module: Bool, text: Bool, asset: Bool, minify: Bool, ids: Bool, +loader: String) -> IO(String):
+  match json:
+    case True{}:
+      emit_json(f, raw)
+    case False{}:
+      match css:
+        case True{}:
+          emit_css_kind(f, raw, module)
+        case False{}:
+          emit_one_text_branch(f, raw, keep, shake, text, loader, asset, minify, ids)
+
+def emit_one(+f: String, +keep: List<&2, String>, +shake: Bool, minify: Bool, ids: Bool, +loader: String) -> IO(String):
   do IO<String>:
     raw : String <- read_text(f)
-    src : String <- ts_prep(f, raw)
-    se : String <- se_flag_of(f)
-    emit_one_se(f, src, keep, shake, se)
+    emit_one_kind(f, raw, keep, shake, loader_is_json(f, loader), String.ends_with(f, ".css"), String.ends_with(f, ".module.css"), Bool.or(String.ends_with(f, ".txt"), String.ends_with(f, ".svg")), loader_is_file(f, loader), minify, ids, loader)
+def css_join_empty(+a: String, +b: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      b
+    case False{}:
+      a ++ "\n" ++ b
 
-def emit_files(files: List<&2, String>, +keep: List<&2, String>) -> IO(String):
+def css_join(+a: String, +b: String) -> String:
+  css_join_empty(a, b, String.is_empty(a))
+
+def css_take_char_go(+s: String, +target: Char, +acc: String, hit: Bool) -> String:
+  match s:
+    case SNil{}:
+      acc
+    case SCon{+h, t}:
+      match hit:
+        case True{}:
+          acc
+        case False{}:
+          css_take_char_go(t, target, acc ++ SCon{h, SNil{}}, Char.is_eq(h, target))
+
+def css_take_until_char(+s: String, target: Char) -> String:
+  css_take_char_go(s, target, "", False{})
+
+def css_drop_char_go(+s: String, +target: Char, hit: Bool) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{+h, t}:
+      match hit:
+        case True{}:
+          s
+        case False{}:
+          css_drop_char_go(t, target, Char.is_eq(h, target))
+
+def css_drop_after_char(+s: String, target: Char) -> String:
+  css_drop_char_go(s, target, False{})
+
+def css_take_word_go(+s: String, +acc: String, stop: Bool) -> String:
+  match s:
+    case SNil{}:
+      acc
+    case SCon{+h, t}:
+      match stop:
+        case True{}:
+          acc
+        case False{}:
+          css_take_word_go(t, acc ++ SCon{h, SNil{}}, Bool.or(Char.is_eq(h, ' '), Char.is_eq(h, '\t')))
+
+def css_drop_last_char(s: String) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{_, SNil{}}:
+      ""
+    case SCon{h, t}:
+      SCon{h, css_drop_last_char(t)}
+
+def css_ref_path_hash(+ref: String, has_hash: Bool) -> String:
+  match has_hash:
+    case True{}:
+      css_drop_last_char(css_take_until_char(ref, '#'))
+    case False{}:
+      ref
+
+def css_ref_path_q(+ref: String, has_query: Bool) -> String:
+  match has_query:
+    case True{}:
+      css_drop_last_char(css_take_until_char(ref, '?'))
+    case False{}:
+      css_ref_path_hash(ref, String.contains(ref, "#"))
+
+def css_ref_path(+ref: String) -> String:
+  css_ref_path_q(ref, String.contains(ref, "?"))
+
+def css_ref_suffix(+ref: String, +path: String) -> String:
+  String.drop(ref, String.length(path))
+
+@unsafe def css_trim_leading_go(sel: Nat, +s: String, skip: Bool, h: Char) -> String:
+  match sel:
+    case 0n:
+      match s:
+        case SNil{}:
+          ""
+        case SCon{+c, t}:
+          match skip:
+            case True{}:
+              css_trim_leading_go(1n, t, Bool.or(Char.is_eq(c, ' '), Char.is_eq(c, '\t')), c)
+            case False{}:
+              s
+    case _:
+      match skip:
+        case True{}:
+          css_trim_leading_go(0n, s, True{}, h)
+        case False{}:
+          SCon{h, s}
+
+def css_trim_leading(+s: String) -> String:
+  css_trim_leading_go(0n, s, True{}, ' ')
+
+def css_trim_word_tail(+word: String, has_space: Bool) -> String:
+  match has_space:
+    case True{}:
+      css_drop_last_char(word)
+    case False{}:
+      word
+
+def css_url_word_ref(+inside: String) -> String:
+  +trimmed : String = css_trim_leading(inside)
+  +word : String = css_take_word_go(trimmed, "", False{})
+  css_trim_word_tail(word, Bool.or(String.contains(trimmed, " "), String.contains(trimmed, "\t")))
+
+def css_url_ref(+inside: String) -> String:
+  match inside:
+    case SNil{}:
+      ""
+    case SCon{'"', t}:
+      css_drop_last_char(css_take_until_char(t, '"'))
+    case SCon{'\'', t}:
+      css_drop_last_char(css_take_until_char(t, '\''))
+    case _:
+      css_url_word_ref(inside)
+
+def css_url_inside(+after: String) -> String:
+  css_drop_last_char(css_take_until_char(after, ')'))
+
+def css_url_tail(+after: String) -> String:
+  css_drop_after_char(after, ')')
+
+def css_drop_leading_newline(+s: String) -> String:
+  match s:
+    case SCon{'\n', t}:
+      t
+    case _:
+      s
+
+def css_import_kind_single(+s: String, one: Bool) -> Nat:
+  match one:
+    case True{}:
+      2n
+    case False{}:
+      0n
+
+def css_import_kind_double(+s: String, two: Bool) -> Nat:
+  match two:
+    case True{}:
+      1n
+    case False{}:
+      css_import_kind_single(s, String.starts_with(s, "@import '"))
+
+def css_import_kind(+s: String) -> Nat:
+  css_import_kind_double(s, String.starts_with(s, "@import \""))
+
+@unsafe def css_strip_imports_go(
+  sel: Nat,
+  +rest: String,
+  +acc: String,
+  fuel: Nat,
+  kind: Nat,
+  +full: String,
+  +tail: String,
+  local: Bool,
+  bare: Bool
+) -> String:
+  match sel:
+    case 0n:
+      match fuel:
+        case 0n:
+          acc ++ rest
+        case 1n+p:
+          css_strip_imports_go(2n, rest, acc, p, kind, full, tail, local, bare)
+    case 2n:
+      match rest:
+        case SNil{}:
+          acc
+        case SCon{+h, t}:
+          match kind:
+            case 1n:
+              +after : String = String.drop(rest, 9n)
+              +ref : String = css_drop_last_char(css_take_until_char(after, '"'))
+              +next_tail : String = css_drop_after_char(after, ';')
+              +next_full : String = String.take(rest, Nat.sub(String.length(rest), String.length(next_tail)))
+              css_strip_imports_go(3n, next_tail, acc, fuel, 0n, next_full, next_tail, Compiler.is_rel(ref), String.starts_with(css_drop_after_char(after, '"'), ";"))
+            case 2n:
+              +after : String = String.drop(rest, 9n)
+              +ref : String = css_drop_last_char(css_take_until_char(after, '\''))
+              +next_tail : String = css_drop_after_char(after, ';')
+              +next_full : String = String.take(rest, Nat.sub(String.length(rest), String.length(next_tail)))
+              css_strip_imports_go(3n, next_tail, acc, fuel, 0n, next_full, next_tail, Compiler.is_rel(ref), String.starts_with(css_drop_after_char(after, '\''), ";"))
+            case _:
+              css_strip_imports_go(0n, t, acc ++ SCon{h, SNil{}}, fuel, css_import_kind(t), "", "", False{}, False{})
+    case _:
+      match local:
+        case True{}:
+          match bare:
+            case True{}:
+              +next_tail : String = css_drop_leading_newline(tail)
+              css_strip_imports_go(0n, next_tail, acc, fuel, css_import_kind(next_tail), "", "", False{}, False{})
+            case False{}:
+              css_strip_imports_go(0n, tail, acc ++ full, fuel, css_import_kind(tail), "", "", False{}, False{})
+        case False{}:
+          css_strip_imports_go(0n, tail, acc ++ full, fuel, css_import_kind(tail), "", "", False{}, False{})
+
+def asset_hash_ok(+c: Char) -> Bool:
+  Bool.and(Bool.not(Char.is_eq(c, '+')), Bool.and(Bool.not(Char.is_eq(c, '/')), Bool.not(Char.is_eq(c, '='))))
+
+@unsafe def asset_hash_go(sel: Nat, +s: String, n: Nat, +acc: String, c: Char, ok: Bool) -> String:
+  match sel:
+    case 0n:
+      match n:
+        case 0n:
+          String.reverse(acc)
+        case _:
+          asset_hash_go(3n, s, n, acc, c, ok)
+    case 3n:
+      match s:
+        case SNil{}:
+          String.reverse(acc)
+        case SCon{+h, t}:
+          asset_hash_go(1n, t, n, acc, h, asset_hash_ok(h))
+    case 1n:
+      match ok:
+        case True{}:
+          asset_hash_go(4n, s, n, acc, c, ok)
+        case False{}:
+          asset_hash_go(0n, s, n, acc, 'a', False{})
+    case _:
+      match n:
+        case 0n:
+          String.reverse(acc)
+        case 1n+n2:
+          asset_hash_go(0n, s, n2, SCon{c, acc}, 'a', False{})
+
+def asset_hash_prefix(+file: String) -> IO(String):
+  do IO<String>:
+    +digest : String <- IO.try(String, Hash.sha256_b64(file))
+    return asset_hash_go(0n, digest, 8n, "", 'a', False{})
+
+def asset_template_kind(+file: String, +template: String, +hash: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      Compiler.basename(file)
+    case False{}:
+      +base : String = Compiler.basename(file)
+      +stem0 : String = css_take_until_char(base, '.')
+      +stem : String = String.take(stem0, Nat.sub(String.length(stem0), 1n))
+      +ext : String = String.drop(base, Nat.add(String.length(stem), 1n))
+      +name0 : String = css_module_replace_go(0n, template, "[name]", stem, False{})
+      +name1 : String = css_module_replace_go(0n, name0, "[ext]", ext, False{})
+      +name2 : String = css_module_replace_go(0n, name1, "[hash:8]", hash, False{})
+      +name3 : String = css_module_replace_go(0n, name2, "[hash]", hash, False{})
+      css_module_replace_go(0n, name3, "[dir]", Compiler.dirname(file), False{})
+
+def asset_template_name(+file: String, +template: String, +hash: String) -> String:
+  asset_template_kind(file, template, hash, String.is_empty(template))
+
+def asset_output_name_check(+name: String, invalid: Bool) -> IO(String):
+  match invalid:
+    case True{}:
+      IO.die(String, 2, "knot: invalid asset naming template (unknown_command)")
+    case False{}:
+      IO.pure(String, name)
+
+def asset_output_name(+file: String, +template: String) -> IO(String):
+  do IO<String>:
+    +hash : String <- asset_hash_prefix(file)
+    +name : String = asset_template_name(file, template, hash)
+    asset_output_name_check(name, Bool.or(Bool.or(String.contains(name, "["), String.contains(name, "]")), Bool.or(String.starts_with(name, "/"), String.contains(name, ".."))))
+@unsafe def css_rewrite_go(
+  sel: Nat,
+  +rest: String,
+  +file: String,
+  +outdir: String,
+  +template: String,
+  +public: String,
+  +acc: String,
+  fuel: Nat,
+  hit: Bool,
+  +full: String,
+  +ref: String,
+  +suffix: String,
+  local: Bool
+) -> IO(String):
+  match sel:
+    case 0n:
+      match fuel:
+        case 0n:
+          IO.pure(String, acc ++ rest)
+        case 1n+p:
+          css_rewrite_go(2n, rest, file, outdir, template, public, acc, p, hit, full, ref, suffix, local)
+    case 2n:
+      match rest:
+        case SNil{}:
+          IO.pure(String, acc)
+        case SCon{+h, t}:
+          match hit:
+            case True{}:
+              +after : String = String.drop(rest, 4n)
+              +inside : String = css_url_inside(after)
+              +tail : String = css_url_tail(after)
+              +next_raw : String = css_url_ref(inside)
+              +next_ref : String = css_ref_path(next_raw)
+              +next_suffix : String = css_ref_suffix(next_raw, next_ref)
+              +next_full : String = "url(" ++ inside ++ ")"
+              css_rewrite_go(1n, tail, file, outdir, template, public, acc, fuel, String.starts_with(tail, "url("), next_full, next_ref, next_suffix, Compiler.is_rel(next_ref))
+            case False{}:
+              css_rewrite_go(0n, t, file, outdir, template, public, acc ++ SCon{h, SNil{}}, fuel, String.starts_with(t, "url("), "", "", "", False{})
+    case _:
+      match local:
+        case False{}:
+          css_rewrite_go(0n, rest, file, outdir, template, public, acc ++ full, fuel, String.starts_with(rest, "url("), "", "", "", False{})
+        case True{}:
+          do IO<String>:
+            +path : String <- resolve_open(file, ref)
+            +name : String <- asset_output_name(path, template)
+            u : Unit <- IO.try(Unit, Fs.copy(path, Compiler.join_rel(outdir, name)))
+            css_rewrite_go(0n, rest, file, outdir, template, public, acc ++ "url(\"" ++ asset_public_url(public, name) ++ suffix ++ "\")", fuel, String.starts_with(rest, "url("), "", "", "", False{})
+
+def css_rewrite_urls(+file: String, +outdir: String, +raw: String, +template: String, +public: String) -> IO(String):
+  do IO<String>:
+    imported : String <- css_module_import_css(file, raw)
+    +local : String = css_module_raw_kind(file, raw, String.ends_with(file, ".module.css"))
+    +prepared : String = css_join(imported, local)
+    +stripped : String = css_strip_imports_go(0n, prepared, "", 65536n, css_import_kind(prepared), "", "", False{}, False{})
+    css_rewrite_go(0n, stripped, file, outdir, template, public, "", 65536n, String.starts_with(stripped, "url("), "", "", "", False{})
+
+@unsafe def emit_css_go(sel: Nat, files: List<&2, String>, +outdir: String, +template: String, +public: String, minify: Bool, +file: String, +acc: String, css: Bool) -> IO(String):
+  match sel:
+    case 0n:
+      match files:
+        case Nil{}:
+          IO.pure(String, css_minify_kind(acc, minify))
+        case Con{+f, rest}:
+          emit_css_go(1n, rest, outdir, template, public, minify, f, acc, String.ends_with(f, ".css"))
+    case _:
+      match css:
+        case True{}:
+          do IO<String>:
+            raw : String <- read_text(file)
+            rewritten : String <- css_rewrite_urls(file, outdir, raw, template, public)
+            +next : String = css_join(acc, rewritten)
+            emit_css_go(0n, files, outdir, template, public, minify, "", next, False{})
+        case False{}:
+          emit_css_go(0n, files, outdir, template, public, minify, "", acc, False{})
+
+def emit_css_files(files: List<&2, String>, +outdir: String, +acc: String, +template: String, +public: String, minify: Bool) -> IO(String):
+  emit_css_go(0n, files, outdir, template, public, minify, "", acc, False{})
+
+def css_path_kind(+out: String, cjs: Bool) -> String:
+  match cjs:
+    case True{}:
+      String.take(out, Nat.sub(String.length(out), 3n)) ++ "css"
+    case False{}:
+      String.take(out, Nat.sub(String.length(out), 2n)) ++ "css"
+
+def css_path(+out: String) -> String:
+  css_path_kind(out, String.ends_with(out, ".cjs"))
+
+@unsafe def css_map_sources_go(sel: Nat, +files: List<&2, String>, +acc: String, +piece: String, first: Bool, is_css: Bool) -> String:
+  match sel:
+    case 0n:
+      match files:
+        case Nil{}:
+          acc
+        case Con{+h, rest}:
+          css_map_sources_go(1n, rest, acc, Compiler.json_str(Compiler.basename(h)), first, String.ends_with(h, ".css"))
+    case 1n:
+      match is_css:
+        case True{}:
+          css_map_sources_go(2n, files, acc, piece, first, is_css)
+        case False{}:
+          css_map_sources_go(0n, files, acc, "", first, False{})
+    case _:
+      match first:
+        case True{}:
+          css_map_sources_go(0n, files, piece, "", False{}, False{})
+        case False{}:
+          css_map_sources_go(0n, files, acc ++ "," ++ piece, "", False{}, False{})
+
+def css_map_line_next(+acc: String, +piece: String, first: Bool) -> String:
+  match first:
+    case True{}:
+      piece
+    case False{}:
+      acc ++ ";" ++ piece
+
+@unsafe def css_only_files_go(sel: Nat, +files: List<&2, String>, +acc: List<&2, String>, +file: String, is_css: Bool) -> List<&2, String>:
+  match sel:
+    case 0n:
+      match files:
+        case Nil{}:
+          acc
+        case Con{+h, rest}:
+          css_only_files_go(1n, rest, acc, h, String.ends_with(h, ".css"))
+    case _:
+      match is_css:
+        case True{}:
+          css_only_files_go(0n, files, list_app(acc, file), "", False{})
+        case False{}:
+          css_only_files_go(0n, files, acc, "", False{})
+
+def css_only_files(+files: List<&2, String>) -> List<&2, String>:
+  css_only_files_go(0n, files, Nil{}, "", False{})
+
+@unsafe def css_map_composed_go(
+  sel: Nat,
+  files: List<&2, String>,
+  source_lines: List<&2, String>,
+  rest: List<&2, String>,
+  +source: U32,
+  +line: U32,
+  prev_source: U32,
+  prev_line: U32,
+  remaining: Nat,
+  +acc: String,
+  first: Bool
+) -> IO(String):
+  match sel:
+    case 0n:
+      match files:
+        case Nil{}:
+          IO.pure(String, acc)
+        case Con{+h, tail}:
+          do IO<String>:
+            raw : String <- read_text(h)
+            +source_lines : List<&2, String> = String.lines(raw)
+            css_map_composed_go(1n, Nil{}, source_lines, tail, source, 0, prev_source, prev_line, remaining, acc, first)
+    case _:
+      match source_lines:
+        case Nil{}:
+          css_map_composed_go(0n, rest, Nil{}, Nil{}, U32.inc(source), 0, prev_source, prev_line, remaining, acc, first)
+        case Con{_, tail}:
+          match remaining:
+            case 0n:
+              IO.pure(String, acc)
+            case 1n+n:
+              +piece : String = Compiler.map_seg_source(0, 0, source, prev_source, line, prev_line, 0, 0)
+              css_map_composed_go(1n, Nil{}, tail, rest, source, U32.inc(line), source, line, n, css_map_line_next(acc, piece, first), False{})
+
+def css_map_mappings_composed(+files: List<&2, String>, +css: String) -> IO(String):
+  css_map_composed_go(0n, css_only_files(files), Nil{}, Nil{}, 0, 0, 0, 0, List.length(&2, String, String.lines(css)), "", True{})
+
+
+def css_map_body(+out: String, files: List<&2, String>, +mappings: String) -> String:
+  "{\"version\":3,\"file\":" ++ Compiler.json_str(Compiler.basename(css_path(out))) ++ ",\"sources\":[" ++ css_map_sources_go(0n, files, "", "", True{}, False{}) ++ "],\"names\":[],\"mappings\":" ++ Compiler.json_str(mappings) ++ "}"
+
+def css_map_css_kind(+css: String, +out: String, +map: String, +mode: String) -> String:
+  match mode:
+    case "inline":
+      css ++ "\n/*# sourceMappingURL=data:application/json;base64," ++ Compiler.b64_encode(map) ++ " */\n"
+    case "linked":
+      css ++ "\n/*# sourceMappingURL=" ++ Compiler.basename(css_path(out)) ++ ".map */\n"
+    case "external":
+      css ++ "\n/*# sourceMappingURL=" ++ Compiler.basename(css_path(out)) ++ ".map */\n"
+    case _:
+      css
+
+def css_map_css(+css: String, +out: String, +mode: String, files: List<&2, String>, +mappings: String) -> String:
+  css_map_css_kind(css, out, css_map_body(out, files, mappings), mode)
+
+def write_css_if(+out: String, +css: String, empty: Bool, +mode: String, +files: List<&2, String>) -> IO(Unit):
+  match empty:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      do IO<Unit>:
+        +mappings : String <- css_map_mappings_composed(files, css)
+        write_text_atomic(css_path(out), css_map_css(css, out, mode, files, mappings))
+
+def write_css_map_kind(+out: String, +css: String, +files: List<&2, String>, +mode: String, external: Bool) -> IO(Unit):
+  match external:
+    case True{}:
+      do IO<Unit>:
+        +mappings : String <- css_map_mappings_composed(files, css)
+        write_text_atomic(css_path(out) ++ ".map", css_map_body(out, files, mappings))
+    case False{}:
+      IO.pure(Unit, Unit{})
+
+def write_css_map_if(+out: String, +css: String, files: List<&2, String>, +mode: String, empty: Bool) -> IO(Unit):
+  match empty:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      write_css_map_kind(out, css, files, mode, Bool.or(String.eq(mode, "linked"), String.eq(mode, "external")))
+
+
+@unsafe def copy_assets_go(sel: Nat, +files: List<&2, String>, +outdir: String, +file: String, asset: Bool, +template: String) -> IO(Unit):
+  match sel:
+    case 0n:
+      match files:
+        case Nil{}:
+          IO.pure(Unit, Unit{})
+        case Con{+h, rest}:
+          copy_assets_go(1n, rest, outdir, h, is_asset_file(h), template)
+    case _:
+      match asset:
+        case True{}:
+          do IO<Unit>:
+            +name : String <- asset_output_name(file, template)
+            u : Unit <- IO.try(Unit, Fs.copy(file, Compiler.join_rel(outdir, name)))
+            copy_assets_go(0n, files, outdir, "", False{}, template)
+        case False{}:
+          copy_assets_go(0n, files, outdir, "", False{}, template)
+
+def copy_assets(+files: List<&2, String>, +out: String, +template: String) -> IO(Unit):
+  copy_assets_go(0n, files, Compiler.dirname(out), "", False{}, template)
+def rewrite_asset_value_kind(+js: String, +old: String, +target: String, same: Bool) -> String:
+  match same:
+    case True{}:
+      js
+    case False{}:
+      css_module_replace_go(0n, js, old, target, False{})
+
+@unsafe def rewrite_asset_refs_go(sel: Nat, +files: List<&2, String>, +js: String, +template: String, +public: String, +file: String, asset: Bool) -> IO(String):
+  match sel:
+    case 0n:
+      match files:
+        case Nil{}:
+          IO.pure(String, js)
+        case Con{+h, rest}:
+          rewrite_asset_refs_go(1n, rest, js, template, public, h, is_asset_file(h))
+    case _:
+      match asset:
+        case True{}:
+          do IO<String>:
+            +name : String <- asset_output_name(file, template)
+            +target : String = asset_public_url(public, name)
+            +rewritten : String = rewrite_asset_value_kind(js, Compiler.basename(file), target, String.eq(Compiler.basename(file), target))
+            rewrite_asset_refs_go(0n, files, rewritten, template, public, "", False{})
+        case False{}:
+          rewrite_asset_refs_go(0n, files, js, template, public, "", False{})
+
+def rewrite_asset_refs(+files: List<&2, String>, +js: String, +template: String, +public: String) -> IO(String):
+  rewrite_asset_refs_go(0n, files, js, template, public, "", False{})
+
+
+def emit_files(files: List<&2, String>, +keep: List<&2, String>, +minify: Bool, +ids: Bool, +loader: String) -> IO(String):
   match files:
     case Nil{}:
       IO.pure(String, "")
     case Con{+f, Nil{}}:
-      emit_one(f, keep, False{})
+      emit_one(f, keep, False{}, minify, ids, loader)
     case Con{+f, rest}:
       do IO<String>:
-        js : String <- emit_one(f, keep, True{})
-        more : String <- emit_files(rest, keep)
+        js : String <- emit_one(f, keep, True{}, minify, ids, loader)
+        more : String <- emit_files(rest, keep, minify, ids, loader)
         return bundle_concat(js, more)
 
 def bundle_entry_conds(+file: String, +conds: String) -> IO(String):
   do IO<String>:
     +files : List<&2, String> <- collect_go(0n, file, Nil{}, Nil{}, False{}, conds)
     keep : List<&2, String> <- collect_keep(files)
-    emit_files(files, keep)
+    emit_files(files, keep, False{}, False{}, "")
 
 def bundle_entry(+file: String) -> IO(String):
   bundle_entry_conds(file, "import,module,node,default")
@@ -3614,8 +5054,127 @@ def hash_ok(+c: Char) -> Bool:
           +h1 : String = String.take(hay, 1n)
           +h2 : String = String.drop(hay, 1n)
           h1 ++ str_replace(0n, h2, needle, rep, False{}, False{})
+def early_format_marker_kind(+tail: String, found: Bool) -> String:
+  match found:
+    case True{}:
+      take_until_semicolon(tail, "")
+    case False{}:
+      ""
+
+def early_format_marker(+format: String, +key: String) -> String:
+  +needle : String = ";" ++ key ++ "="
+  +tail : String = drop_until_key(format, needle)
+  early_format_marker_kind(tail, String.contains(format, needle))
+
+def option_pair_key(+marker: String) -> String:
+  drop_last_early(css_take_until_char(marker, '='))
+
+def option_pair_value(+marker: String) -> String:
+  +key : String = css_take_until_char(marker, '=')
+  String.drop(marker, String.length(key))
+
+def apply_define_kind(+js: String, +marker: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      js
+    case False{}:
+      str_replace(0n, js, option_pair_key(marker), option_pair_value(marker), False{}, False{})
+
+def apply_drop_kind(+js: String, +marker: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      js
+    case False{}:
+      +direct : String = str_replace(0n, js, marker ++ "(", "void (", False{}, False{})
+      +spaced : String = str_replace(0n, marker, ".", " . ", False{}, False{}) ++ " ("
+      str_replace(0n, direct, spaced, "void (", False{}, False{})
+
+def apply_build_transforms(+js: String, +format: String) -> String:
+  +define : String = early_format_marker(format, "define")
+  +drop : String = early_format_marker(format, "drop")
+  +defined : String = apply_define_kind(js, define, String.is_empty(define))
+  apply_drop_kind(defined, drop, String.is_empty(drop))
+
+def strip_external_alias_kind(+js: String, +pair: String, +external: String, hit: Bool) -> String:
+  match hit:
+    case True{}:
+      str_replace(0n, js, "const " ++ Compiler.default_import_name(pair) ++ " = " ++ Compiler.default_import_binding(pair) ++ ";\n", "", False{}, False{})
+    case False{}:
+      js
+
+@unsafe def strip_external_aliases_go(+pairs: List<&2, String>, +external: String, +js: String) -> String:
+  match pairs:
+    case Nil{}:
+      js
+    case Con{+pair, rest}:
+      +hit : Bool = external_spec(external, Compiler.default_import_path(pair))
+      strip_external_aliases_go(rest, external, strip_external_alias_kind(js, pair, external, hit))
+
+def strip_external_aliases_kind(+src: String, +external: String, +js: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      js
+    case False{}:
+      strip_external_aliases_go(Compiler.default_imports_of(src), external, js)
+
+def strip_external_aliases(+src: String, +external: String, +js: String) -> String:
+  strip_external_aliases_kind(src, external, js, String.is_empty(external))
+
+def lower_default_tail(+js: String) -> String:
+  +semi : String = str_replace(0n, js, ";\ndefault ", ";\nconst __knot_default_value = ", False{}, False{})
+  +line : String = str_replace(0n, semi, "\ndefault ", "\nconst __knot_default_value = ", False{}, False{})
+  str_replace(0n, line, "} const ", "}; const ", False{}, False{})
+
+def lower_default_head(+js: String, start: Bool) -> String:
+  match start:
+    case True{}:
+      lower_default_tail(str_replace(0n, js, "default ", "const __knot_default_value = ", False{}, False{}))
+    case False{}:
+      lower_default_tail(js)
+
+def lower_default_body(+js: String) -> String:
+  lower_default_head(js, String.starts_with(js, "default "))
 
 
+
+
+def sourcemap_mode_kind(+marker: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      "none"
+    case False{}:
+      marker
+
+def sourcemap_mode(+marker: String) -> String:
+  sourcemap_mode_kind(marker, String.is_empty(marker))
+def manifest_source_map_value(+path: String, +mode: String) -> String:
+  match mode:
+    case "inline":
+      Compiler.json_str("inline")
+    case "linked":
+      Compiler.json_str(path ++ ".map")
+    case "external":
+      Compiler.json_str(path ++ ".map")
+    case _:
+      ""
+
+def manifest_source_map_field(+path: String, +mode: String) -> String:
+  match mode:
+    case "none":
+      ""
+    case _:
+      ",\"sourceMap\":" ++ manifest_source_map_value(path, mode)
+
+
+def dyn_public_ref_kind(+public: String, +name: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      "./" ++ name
+    case False{}:
+      asset_public_url(public, name)
+
+def dyn_public_ref(+public: String, +name: String) -> String:
+  dyn_public_ref_kind(public, name, String.is_empty(public))
 
 def dyn_old_rel(rel: Bool, +spec: String) -> String:
   match rel:
@@ -3627,49 +5186,49 @@ def dyn_old_rel(rel: Bool, +spec: String) -> String:
 def dyn_old(+spec: String) -> String:
   dyn_old_rel(String.starts_with(spec, "./"), spec)
 
-def emit_dyn_one(+importer: String, +outdir: String, +spec: String) -> IO(String):
+def emit_dyn_one(+importer: String, +outdir: String, +spec: String, +sm: String) -> IO(String):
   do IO<String>:
     +path : String <- resolve_open(importer, spec)
     raw : String <- read_text(path)
     src : String <- ts_prep(path, raw)
     js : String <- bundle_js(path, Compiler.transpile(path, src))
-    +got : String <- IO.try(String, Hash.sha512_b64(path))
+    +got : String <- IO.try(String, Hash.sha256_b64(path))
     +name : String = take_hash(0n, got, 8n, "", 'a', False{}) ++ ".js"
-    u : Unit <- transpile_ok_to(Compiler.join_rel(outdir, name), js, Compiler.make_map(path, Nil{}), "linked")
+    u : Unit <- transpile_ok_to(Compiler.join_rel(outdir, name), js, Compiler.make_map(path, Nil{}), sm)
     return name
 
-def emit_dyn_go(+importer: String, +out: String, +spec: String) -> IO(Unit):
+def emit_dyn_go(+importer: String, +out: String, +spec: String, +public: String, +sm: String) -> IO(Unit):
   do IO<Unit>:
-    +name : String <- emit_dyn_one(importer, Compiler.dirname(out), spec)
+    +name : String <- emit_dyn_one(importer, Compiler.dirname(out), spec, sm)
     js : String <- read_text(out)
-    write_text_atomic(out, str_replace(0n, js, dyn_old(spec), "./" ++ name, False{}, False{}))
+    write_text_atomic(out, str_replace(0n, js, dyn_old(spec), dyn_public_ref(public, name), False{}, False{}))
 
-def emit_dyn(+importer: String, +out: String, specs: List<&2, String>) -> IO(Unit):
+def emit_dyn(+importer: String, +out: String, specs: List<&2, String>, +public: String, +sm: String) -> IO(Unit):
   match specs:
     case Nil{}:
       IO.pure(Unit, Unit{})
     case Con{+spec, rest}:
       do IO<Unit>:
-        u : Unit <- emit_dyn_go(importer, out, spec)
-        emit_dyn(importer, out, rest)
+        u : Unit <- emit_dyn_go(importer, out, spec, public, sm)
+        emit_dyn(importer, out, rest, public, sm)
 
 
-def emit_req_one(+importer: String, +outdir: String, +spec: String) -> IO(Unit):
+def emit_req_one(+importer: String, +outdir: String, +spec: String, +sm: String) -> IO(Unit):
   do IO<Unit>:
     +path : String <- resolve_open(importer, spec)
     raw : String <- read_text(path)
     src : String <- ts_prep(path, raw)
     js : String <- bundle_js(path, Compiler.transpile(path, src))
-    transpile_ok_to(Compiler.join_rel(outdir, Compiler.basename(Compiler.js_path(path))), js, Compiler.make_map(path, Nil{}), "linked")
+    transpile_ok_to(Compiler.join_rel(outdir, Compiler.basename(Compiler.js_path(path))), js, Compiler.make_map(path, Nil{}), sm)
 
-def emit_req(+importer: String, +out: String, specs: List<&2, String>) -> IO(Unit):
+def emit_req(+importer: String, +out: String, specs: List<&2, String>, +sm: String) -> IO(Unit):
   match specs:
     case Nil{}:
       IO.pure(Unit, Unit{})
     case Con{+spec, rest}:
       do IO<Unit>:
-        u : Unit <- emit_req_one(importer, Compiler.dirname(out), spec)
-        emit_req(importer, out, rest)
+        u : Unit <- emit_req_one(importer, Compiler.dirname(out), spec, sm)
+        emit_req(importer, out, rest, sm)
 
 def bundle_preflight_one(+importer: String, +spec: String) -> IO(Unit):
   do IO<Unit>:
@@ -3693,15 +5252,17 @@ def bundle_preflight(+file: String, +src: String) -> IO(Unit):
     u : Unit <- bundle_preflight_specs(file, Compiler.dyn_imports_of(src))
     bundle_preflight_specs(file, Compiler.requires_of(src))
 
-def bundle_write_dyn(+file: String, +out: String, +src: String) -> IO(Unit):
+
+def bundle_write_dyn(+file: String, +out: String, +src: String, +public: String, +sm: String) -> IO(Unit):
   do IO<Unit>:
-    u : Unit <- emit_dyn(file, out, Compiler.dyn_imports_of(src))
-    emit_req(file, out, Compiler.requires_of(src))
+    u : Unit <- emit_dyn(file, out, Compiler.dyn_imports_of(src), public, sm)
+    emit_req(file, out, Compiler.requires_of(src), sm)
 
 def meta_input_one(+f: String) -> IO(String):
   do IO<String>:
     src : String <- read_text(f)
-    return Compiler.json_str(f) ++ ":{\"bytes\":" ++ Nat.show(String.length(src)) ++ "}"
+    +digest : String <- IO.try(String, Hash.sha256_b64(f))
+    return Compiler.json_str(f) ++ ":{\"bytes\":" ++ Nat.show(String.length(src)) ++ ",\"digest\":" ++ Compiler.json_str(digest) ++ "}"
 
 def meta_inputs_go(files: List<&2, String>) -> IO(String):
   match files:
@@ -3715,33 +5276,919 @@ def meta_inputs_go(files: List<&2, String>) -> IO(String):
         b : String <- meta_inputs_go(rest)
         return a ++ "," ++ b
 
-def meta_write_none(none: Bool, +meta: String, +file: String, +out: String, +js: String, files: List<&2, String>) -> IO(Unit):
+def meta_css_field(+out: String, +css: String, empty: Bool, +mode: String) -> String:
+  match empty:
+    case True{}:
+      ""
+    case False{}:
+      ",\"css\":" ++ Compiler.json_str(css_path(out)) ++ manifest_source_map_field(css_path(out), mode)
+
+def meta_write_none(none: Bool, +meta: String, +file: String, +out: String, +src: String, +js: String, +css: String, files: List<&2, String>, +mode: String) -> IO(Unit):
   match none:
     case True{}:
       IO.pure(Unit, Unit{})
     case False{}:
       do IO<Unit>:
         inputs : String <- meta_inputs_go(files)
-        +body : String = "{\"inputs\":{" ++ inputs ++ "},\"outputs\":{" ++ Compiler.json_str(out) ++ ":{\"bytes\":" ++ Nat.show(String.length(js)) ++ "}}}"
+        +digest : String <- IO.try(String, Hash.sha256_b64(out))
+        +output : String = Compiler.json_str(out) ++ ":{\"kind\":\"js\",\"bytes\":" ++ Nat.show(String.length(js)) ++ ",\"digest\":" ++ Compiler.json_str(digest) ++ ",\"entry\":" ++ Compiler.json_str(file) ++ ",\"imports\":" ++ Compiler.json_list(Compiler.imports_of(src)) ++ ",\"exports\":" ++ Compiler.json_list(Compiler.exports_of(src)) ++ meta_css_field(out, css, String.is_empty(css), mode) ++ manifest_source_map_field(out, mode) ++ "}"
+        +body : String = "{\"inputs\":{" ++ inputs ++ "},\"outputs\":{" ++ output ++ "}}"
         write_text_atomic(meta, body)
 
-def meta_write(+meta: String, +file: String, +out: String, +js: String, files: List<&2, String>) -> IO(Unit):
-  meta_write_none(String.is_empty(meta), meta, file, out, js, files)
+def manifest_css_kind(+out: String, +css: String, +digest: String, empty: Bool, +mode: String) -> String:
+  match empty:
+    case True{}:
+      ""
+    case False{}:
+      ",\"" ++ css_path(out) ++ "\":{\"bytes\":" ++ Nat.show(String.length(css)) ++ ",\"kind\":\"css\",\"digest\":" ++ Compiler.json_str(digest) ++ manifest_source_map_field(css_path(out), mode) ++ "}"
 
-def bundle_write_opts(+file: String, +out: String, +conds: String, +meta: String) -> IO(Unit):
+def manifest_css(+out: String, +css: String, empty: Bool, +mode: String) -> IO(String):
+  match empty:
+    case True{}:
+      IO.pure(String, "")
+    case False{}:
+      do IO<String>:
+        +digest : String <- IO.try(String, Hash.sha256_b64(css_path(out)))
+        return manifest_css_kind(out, css, digest, False{}, mode)
+@unsafe def manifest_dyn_go(sel: Nat, +importer: String, +outdir: String, specs: List<&2, String>, +spec: String, +mode: String) -> IO(String):
+  match sel:
+    case 0n:
+      match specs:
+        case Nil{}:
+          IO.pure(String, "")
+        case Con{+h, tail}:
+          manifest_dyn_go(1n, importer, outdir, tail, h, mode)
+    case _:
+      do IO<String>:
+        +path : String <- resolve_open(importer, spec)
+        +got : String <- IO.try(String, Hash.sha256_b64(path))
+        +name : String = take_hash(0n, got, 8n, "", 'a', False{}) ++ ".js"
+        +chunk_path : String = Compiler.join_rel(outdir, name)
+        +chunk : String <- read_text(chunk_path)
+        +digest : String <- IO.try(String, Hash.sha256_b64(chunk_path))
+        +more : String <- manifest_dyn_go(0n, importer, outdir, specs, "", mode)
+        return ",\"" ++ name ++ "\":{\"bytes\":" ++ Nat.show(String.length(chunk)) ++ ",\"kind\":\"dynamic\",\"digest\":" ++ Compiler.json_str(digest) ++ manifest_source_map_field(name, mode) ++ "}" ++ more
+
+def manifest_dyn(+importer: String, +outdir: String, specs: List<&2, String>, +mode: String) -> IO(String):
+  manifest_dyn_go(0n, importer, outdir, specs, "", mode)
+
+@unsafe def manifest_asset_go(sel: Nat, +files: List<&2, String>, +outdir: String, +file: String, asset: Bool, +template: String) -> IO(String):
+  match sel:
+    case 0n:
+      match files:
+        case Nil{}:
+          IO.pure(String, "")
+        case Con{+h, rest}:
+          manifest_asset_go(1n, rest, outdir, h, is_asset_file(h), template)
+    case _:
+      match asset:
+        case True{}:
+          do IO<String>:
+            +name : String <- asset_output_name(file, template)
+            +digest : String <- IO.try(String, Hash.sha256_b64(file))
+            +copy : String <- read_text(Compiler.join_rel(outdir, name))
+            +more : String <- manifest_asset_go(0n, files, outdir, "", False{}, template)
+            return ",\"" ++ name ++ "\":{\"bytes\":" ++ Nat.show(String.length(copy)) ++ ",\"kind\":\"asset\",\"digest\":" ++ Compiler.json_str(digest) ++ "}" ++ more
+        case False{}:
+          manifest_asset_go(0n, files, outdir, "", False{}, template)
+
+def manifest_assets(+out: String, files: List<&2, String>, +template: String) -> IO(String):
+  manifest_asset_go(0n, files, Compiler.dirname(out), "", False{}, template)
+
+def manifest_write(+manifest: String, +file: String, +out: String, +src: String, +js: String, +css: String, files: List<&2, String>, +template: String, +mode: String) -> IO(Unit):
   do IO<Unit>:
-    +files : List<&2, String> <- bundle_files_conds(file, conds)
-    keep : List<&2, String> <- collect_keep(files)
-    +js : String <- emit_files(files, keep)
+    +dynamic : String <- manifest_dyn(file, Compiler.dirname(out), Compiler.dyn_imports_of(src), mode)
+    +assets : String <- manifest_assets(out, files, template)
+    +css_output : String <- manifest_css(out, css, String.is_empty(css), mode)
+    +output_digest : String <- IO.try(String, Hash.sha256_b64(out))
+    +body : String = "{\"version\":1,\"entries\":{" ++ Compiler.json_str(Compiler.basename(file)) ++ ":" ++ Compiler.json_str(out) ++ "},\"outputs\":{" ++ Compiler.json_str(out) ++ ":{\"kind\":\"js\",\"bytes\":" ++ Nat.show(String.length(js)) ++ ",\"digest\":" ++ Compiler.json_str(output_digest) ++ ",\"entry\":" ++ Compiler.json_str(file) ++ manifest_source_map_field(out, mode) ++ "}" ++ css_output ++ assets ++ dynamic ++ "}}"
+    write_text_atomic(manifest, body)
+
+def meta_write_kind(+meta: String, +file: String, +out: String, +src: String, +js: String, +css: String, files: List<&2, String>, +template: String, manifest: Bool, +mode: String) -> IO(Unit):
+  match manifest:
+    case True{}:
+      manifest_write(String.drop(meta, 9n), file, out, src, js, css, files, template, mode)
+    case False{}:
+      meta_write_none(String.is_empty(meta), meta, file, out, src, js, css, files, mode)
+
+def meta_write(+meta: String, +file: String, +out: String, +src: String, +js: String, +css: String, files: List<&2, String>, +template: String, +mode: String) -> IO(Unit):
+  meta_write_kind(meta, file, out, src, js, css, files, template, String.starts_with(meta, "manifest:"), mode)
+
+def cjs_export_line(+name: String, default: Bool) -> String:
+  match default:
+    case True{}:
+      "module.exports[\"default\"] = __knot_default_value;\n"
+    case False{}:
+      "module.exports[" ++ Compiler.json_str(name) ++ "] = " ++ name ++ ";\n"
+
+def cjs_exports_go(names: List<&2, String>, +acc: String) -> String:
+  match names:
+    case Nil{}:
+      acc
+    case Con{+h, rest}:
+      cjs_exports_go(rest, acc ++ cjs_export_line(h, String.eq(h, "default")))
+
+def bundle_cjs(+src: String, +js: String) -> IO(String):
+  names : List<&2, String> = Compiler.exports_of(src)
+  +body0 : String = lower_default_body(js)
+  +body : String = body0
+  IO.pure(String, cjs_exports_go(names, "\"use strict\";\n" ++ body ++ "\n"))
+
+def esm_export_line(+name: String, default: Bool) -> String:
+  match default:
+    case True{}:
+      "export { __knot_default_value as default };\n"
+    case False{}:
+      "export { " ++ name ++ " };\n"
+
+def esm_exports_go(names: List<&2, String>, +acc: String) -> String:
+  match names:
+    case Nil{}:
+      acc
+    case Con{+h, rest}:
+      esm_exports_go(rest, acc ++ esm_export_line(h, String.eq(h, "default")))
+
+def bundle_esm(+src: String, +js: String) -> IO(String):
+  names : List<&2, String> = Compiler.exports_of(src)
+  +body0 : String = lower_default_body(js)
+  +body : String = body0
+  IO.pure(String, esm_exports_go(names, body ++ "\n"))
+
+def build_format_base_kind(+format: String, +tail: String, has_marker: Bool) -> String:
+  match has_marker:
+    case True{}:
+      String.take(format, Nat.sub(String.length(format), Nat.add(String.length(tail), 1n)))
+    case False{}:
+      format
+
+def build_format_base(+format: String) -> String:
+  +tail : String = drop_until_key(format, ";")
+  build_format_base_kind(format, tail, String.contains(format, ";"))
+
+def build_format_marker_value(+tail: String, semicolon: Bool) -> String:
+  match semicolon:
+    case True{}:
+      css_drop_last_char(css_take_until_char(tail, ';'))
+    case False{}:
+      tail
+
+def build_format_marker_kind(+tail: String, found: Bool) -> String:
+  match found:
+    case True{}:
+      build_format_marker_value(tail, String.contains(tail, ";"))
+    case False{}:
+      ""
+
+def build_format_marker(+format: String, +key: String) -> String:
+  +needle : String = ";" ++ key ++ "="
+  +tail : String = drop_until_key(format, needle)
+  build_format_marker_kind(tail, String.contains(format, needle))
+def bundle_split_validate_kind(splitting: Bool, esm: Bool) -> IO(Unit):
+  match splitting:
+    case True{}:
+      match esm:
+        case True{}:
+          IO.pure(Unit, Unit{})
+        case False{}:
+          IO.die(Unit, 2, "knot: --splitting requires --format esm (unsupported_split)")
+    case False{}:
+      IO.die(Unit, 2, "knot: dynamic imports require --splitting (unsupported_split)")
+
+def bundle_split_validate_present(+format: String) -> IO(Unit):
+  bundle_split_validate_kind(String.eq(build_format_marker(format, "splitting"), "true"), String.eq(build_format_base(format), "esm"))
+
+def bundle_split_validate(+format: String, dyns: List<&2, String>, reqs: List<&2, String>) -> IO(Unit):
+  match dyns:
+    case Nil{}:
+      match reqs:
+        case Nil{}:
+          IO.pure(Unit, Unit{})
+        case Con{_, _}:
+          bundle_split_validate_present(format)
+    case Con{_, _}:
+      bundle_split_validate_present(format)
+
+def build_option_validate_empty_kind(+key: String, +value: String, empty: Bool) -> IO(Unit):
+  match empty:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      IO.die(Unit, 2, "knot: --" ++ key ++ " is unsupported in this release (unsupported_option)")
+
+def loader_supported(+loader: String) -> Bool:
+  Bool.and(
+    Bool.not(String.is_empty(loader)),
+    Bool.and(
+      Bool.not(String.is_empty(loader_extension(loader))),
+      Bool.or(String.ends_with(loader, "=text"), String.ends_with(loader, "=json"))))
+
+def loader_validate_kind(+loader: String, valid: Bool) -> IO(Unit):
+  match valid:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      IO.die(Unit, 2, "knot: unsupported loader " ++ loader ++ " (unsupported_loader)")
+
+def loader_validate(+format: String) -> IO(Unit):
+  +loader : String = build_format_marker(format, "loader")
+  loader_validate_kind(loader, Bool.or(String.is_empty(loader), loader_supported(loader)))
+
+def sources_content_validate(+format: String) -> IO(Unit):
+  +value : String = build_format_marker(format, "sources-content")
+  build_option_validate_empty_kind("sources-content", value, Bool.or(String.is_empty(value), String.eq(value, "exclude")))
+
+def build_options_validate(+format: String) -> IO(Unit):
+  do IO<Unit>:
+    u0 : Unit <- loader_validate(format)
+    u1 : Unit <- sources_content_validate(format)
+    u2 : Unit <- build_option_validate_empty_kind("css-naming", build_format_marker(format, "css-naming"), String.is_empty(build_format_marker(format, "css-naming")))
+    u3 : Unit <- build_option_validate_empty_kind("root", build_format_marker(format, "root"), String.is_empty(build_format_marker(format, "root")))
+    u4 : Unit <- build_option_validate_empty_kind("min-chunk-size", build_format_marker(format, "min-chunk-size"), Bool.or(String.is_empty(build_format_marker(format, "min-chunk-size")), String.eq(build_format_marker(format, "min-chunk-size"), "0")))
+    u5 : Unit <- build_option_validate_empty_kind("clear-on-error", build_format_marker(format, "clear-on-error"), String.is_empty(build_format_marker(format, "clear-on-error")))
+    u6 : Unit <- build_option_validate_empty_kind("ignore-side-effects-annotations", build_format_marker(format, "ignore-side-effects-annotations"), String.is_empty(build_format_marker(format, "ignore-side-effects-annotations")))
+    u7 : Unit <- build_option_validate_empty_kind("log-level", build_format_marker(format, "log-level"), String.is_empty(build_format_marker(format, "log-level")))
+    u8 : Unit <- build_option_validate_empty_kind("diagnostics", build_format_marker(format, "diagnostics"), String.is_empty(build_format_marker(format, "diagnostics")))
+    u9 : Unit <- build_option_validate_empty_kind("packages", build_format_marker(format, "packages"), Bool.or(String.is_empty(build_format_marker(format, "packages")), Bool.or(String.eq(build_format_marker(format, "packages"), "bundle"), String.eq(build_format_marker(format, "packages"), "external"))))
+    u10 : Unit <- build_option_validate_empty_kind("gpu", build_format_marker(format, "gpu"), String.is_empty(build_format_marker(format, "gpu")))
+    u11 : Unit <- build_option_validate_empty_kind("platform", build_format_marker(format, "platform"), String.is_empty(build_format_marker(format, "platform")))
+    build_option_validate_empty_kind("tsconfig-raw", build_format_marker(format, "tsconfig-raw"), String.is_empty(build_format_marker(format, "tsconfig-raw")))
+
+def splitting_output_dir_kind(empty: Bool) -> IO(Unit):
+  match empty:
+    case True{}:
+      IO.die(Unit, 2, "knot: --splitting requires --outdir (unsupported_split)")
+    case False{}:
+      IO.pure(Unit, Unit{})
+
+def splitting_output_validate_kind(splitting: Bool, +outdir: String) -> IO(Unit):
+  match splitting:
+    case True{}:
+      splitting_output_dir_kind(String.is_empty(outdir))
+    case False{}:
+      IO.pure(Unit, Unit{})
+
+def splitting_output_validate(+format: String, +outdir: String) -> IO(Unit):
+  splitting_output_validate_kind(String.eq(build_format_marker(format, "splitting"), "true"), outdir)
+
+def build_minify_enabled(+format: String) -> Bool:
+  Bool.or(
+    String.eq(build_format_marker(format, "minify"), "true"),
+    Bool.or(String.eq(build_format_marker(format, "minify-syntax"), "true"), String.eq(build_format_marker(format, "minify-whitespace"), "true")))
+
+def build_format_apply_other(+format: String, +val: String, +which: String) -> String:
+  format ++ ";" ++ which ++ "=" ++ val
+
+def build_format_apply_flag_kind(+format: String, +val: String, +which: String, is_format: Bool) -> String:
+  match is_format:
+    case True{}:
+      val
+    case False{}:
+      build_format_apply_other(format, val, which)
+
+def build_format_apply_flag(+format: String, +val: String, +which: String) -> String:
+  build_format_apply_flag_kind(format, val, which, String.eq(which, "format"))
+def build_path_apply_outdir(+outdir: String, +val: String, is_outdir: Bool) -> String:
+  match is_outdir:
+    case True{}:
+      val
+    case False{}:
+      outdir
+
+def build_path_apply_format(+format: String, +val: String, is_outdir: Bool) -> String:
+  match is_outdir:
+    case True{}:
+      format
+    case False{}:
+      format ++ ";public=" ++ val
+
+def build_format_value_flag(+head: String) -> String:
+  match head:
+    case "--format":
+      "format"
+    case "--asset-naming":
+      "asset"
+    case "--sourcemap":
+      "sourcemap"
+    case "--splitting":
+      "splitting"
+    case "--minify-syntax":
+      "minify-syntax"
+    case "--minify-whitespace":
+      "minify-whitespace"
+    case "--minify-identifiers":
+      "minify-identifiers"
+    case "--keep-names":
+      "keep-names"
+    case "--legal-comments":
+      "legal-comments"
+    case _:
+      "sourcemap"
+
+def build_format_option(+head: String) -> Bool:
+  Bool.or(String.eq(head, "--format"), Bool.or(String.eq(head, "--asset-naming"), Bool.or(String.eq(head, "--sourcemap"), Bool.or(String.eq(head, "--splitting"), Bool.or(String.eq(head, "--minify-syntax"), Bool.or(String.eq(head, "--minify-whitespace"), Bool.or(String.eq(head, "--minify-identifiers"), Bool.or(String.eq(head, "--keep-names"), String.eq(head, "--legal-comments")))))))))
+
+def build_format_key_option(+which: String) -> Bool:
+  Bool.or(String.eq(which, "format"), Bool.or(String.eq(which, "asset"), Bool.or(String.eq(which, "sourcemap"), Bool.or(String.eq(which, "splitting"), Bool.or(String.eq(which, "minify-syntax"), Bool.or(String.eq(which, "minify-whitespace"), Bool.or(String.eq(which, "minify-identifiers"), Bool.or(String.eq(which, "keep-names"), String.eq(which, "legal-comments")))))))))
+
+
+def build_path_value_flag_kind(+head: String, is_outdir: Bool) -> String:
+  match is_outdir:
+    case True{}:
+      "outdir"
+    case False{}:
+      "public"
+def build_path_value_flag(+head: String) -> String:
+  build_path_value_flag_kind(head, String.eq(head, "--outdir"))
+
+
+def bundle_format_pick_kind(+format: String, +src: String, +js: String, cjs: Bool, esm: Bool) -> IO(String):
+  match cjs:
+    case True{}:
+      bundle_cjs(src, js)
+    case False{}:
+      match esm:
+        case True{}:
+          bundle_esm(src, js)
+        case False{}:
+          IO.die(String, 2, "knot: unsupported format " ++ format ++ " (unknown_command)")
+
+def bundle_format_pick(+format: String, +src: String, +js: String, cjs: Bool, esm: Bool) -> IO(String):
+  +base : String = build_format_base(format)
+  bundle_format_pick_kind(base, src, js, String.eq(base, "cjs"), String.eq(base, "esm"))
+
+def bundle_write_opts_format(+file: String, +out: String, +conds: String, +meta: String, +format: String) -> IO(Unit):
+  do IO<Unit>:
     raw : String <- read_text(file)
     +src : String <- normalize_source(raw)
-    u0 : Unit <- bundle_preflight(file, src)
-    u1 : Unit <- transpile_ok_to(out, js, Compiler.make_map(file, Nil{}), "linked")
-    u2 : Unit <- meta_write(meta, file, out, js, files)
-    bundle_write_dyn(file, out, src)
+    split_check : Unit <- bundle_split_validate(format, Compiler.dyn_imports_of(src), Nil{})
+    +files : List<&2, String> <- bundle_files_conds(file, external_conds(conds, format))
+    keep : List<&2, String> <- collect_keep(files)
+    +asset_template : String = build_format_marker(format, "asset")
+    +js0 : String <- emit_files(files, keep, build_minify_enabled(format), String.eq(build_format_marker(format, "minify-identifiers"), "true"), build_format_marker(format, "loader"))
+    +js1 : String = apply_build_transforms(external_imports(src, external_marker(format)) ++ strip_external_aliases(src, external_marker(format), js0), format)
+    +js : String <- rewrite_asset_refs(files, js1, asset_template, build_format_marker(format, "public"))
+    +css : String <- emit_css_files(files, Compiler.dirname(css_path(out)), "", asset_template, build_format_marker(format, "public"), build_minify_enabled(format))
+    +output : String <- bundle_format_pick(format, src, js, String.eq(format, "cjs"), String.eq(format, "esm"))
+    preflight : Unit <- bundle_preflight(file, src)
+    map_write : Unit <- transpile_ok_to(out, output, Compiler.make_map_sources(file, files, Nil{}), sourcemap_mode(build_format_marker(format, "sourcemap")))
+    u2 : Unit <- write_css_if(out, css, String.is_empty(css), build_format_marker(format, "sourcemap"), files)
+    u3 : Unit <- write_css_map_if(out, css, files, build_format_marker(format, "sourcemap"), String.is_empty(css))
+    u4 : Unit <- copy_assets(files, out, build_format_marker(format, "asset"))
+    u5 : Unit <- bundle_write_dyn(file, out, src, build_format_marker(format, "public"), sourcemap_mode(build_format_marker(format, "sourcemap")))
+    u6 : Unit <- meta_write(meta, file, out, src, output, css, files, asset_template, sourcemap_mode(build_format_marker(format, "sourcemap")))
+    return Unit{}
+def bundle_write_opts(+file: String, +out: String, +conds: String, +meta: String) -> IO(Unit):
+  bundle_write_opts_format(file, out, conds, meta, "esm")
 
 def bundle_write(+file: String, +out: String) -> IO(Unit):
   bundle_write_opts(file, out, "import,module,node,default", "")
+
+@unsafe def html_quote_go(sel: Nat, +text: String, +acc: String, c: Char, stop: Bool) -> String:
+  match sel:
+    case 0n:
+      match text:
+        case SNil{}:
+          String.reverse(acc)
+        case SCon{+h, t}:
+          html_quote_go(1n, t, acc, h, Char.is_eq(h, '"'))
+    case _:
+      match stop:
+        case True{}:
+          String.reverse(acc)
+        case False{}:
+          html_quote_go(0n, text, SCon{c, acc}, 'a', False{})
+
+
+def html_script_src_pick(+after: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      ""
+    case False{}:
+      html_quote_go(0n, after, "", 'a', False{})
+
+
+@unsafe def html_drop_attr_go(sel: Nat, +html: String, +key: String, quote_mark: Bool, single: Bool) -> String:
+  match sel:
+    case 0n:
+      match html:
+        case SNil{}:
+          ""
+        case SCon{+h, t}:
+          html_drop_attr_go(4n, html, key, String.starts_with(html, "<!--"), False{})
+    case 1n:
+      html_drop_attr_go(6n, html, key, String.starts_with(html, key), False{})
+    case 2n:
+      match html:
+        case SNil{}:
+          ""
+        case SCon{+h, t}:
+          html_drop_attr_go(9n, t, key, Char.is_eq(h, '"'), False{})
+    case 3n:
+      html_drop_attr_go(10n, html, key, String.starts_with(html, "-->"), False{})
+    case 4n:
+      match quote_mark:
+        case True{}:
+          html_drop_attr_go(3n, String.drop(html, 4n), key, False{}, False{})
+        case False{}:
+          html_drop_attr_go(11n, html, key, False{}, False{})
+    case 11n:
+      match html:
+        case SNil{}:
+          ""
+        case SCon{+h, t}:
+          html_drop_attr_go(5n, html, key, Char.is_eq(h, '<'), False{})
+    case 5n:
+      match quote_mark:
+        case True{}:
+          html_drop_attr_go(1n, html, key, False{}, False{})
+        case False{}:
+          html_drop_attr_go(0n, String.drop(html, 1n), key, False{}, False{})
+    case 6n:
+      match quote_mark:
+        case True{}:
+          html
+        case False{}:
+          html_drop_attr_go(12n, html, key, False{}, False{})
+    case 12n:
+      match html:
+        case SNil{}:
+          ""
+        case SCon{+h, t}:
+          html_drop_attr_go(7n, t, key, Char.is_eq(h, '>'), False{})
+    case 7n:
+      match quote_mark:
+        case True{}:
+          html_drop_attr_go(0n, html, key, False{}, False{})
+        case False{}:
+          html_drop_attr_go(13n, html, key, False{}, False{})
+    case 13n:
+      match html:
+        case SNil{}:
+          ""
+        case SCon{+h, t}:
+          html_drop_attr_go(8n, t, key, Bool.or(Char.is_eq(h, '"'), Char.is_eq(h, '\'')), Char.is_eq(h, '\''))
+    case 8n:
+      match quote_mark:
+        case True{}:
+          html_drop_attr_go(14n, html, key, True{}, single)
+        case False{}:
+          html_drop_attr_go(1n, html, key, False{}, False{})
+    case 14n:
+      match single:
+        case True{}:
+          html_drop_attr_go(15n, html, key, False{}, True{})
+        case False{}:
+          html_drop_attr_go(2n, html, key, False{}, False{})
+    case 15n:
+      match html:
+        case SNil{}:
+          ""
+        case SCon{+h, t}:
+          html_drop_attr_go(16n, t, key, Char.is_eq(h, '\''), False{})
+    case 16n:
+      match quote_mark:
+        case True{}:
+          html_drop_attr_go(1n, html, key, False{}, False{})
+        case False{}:
+          html_drop_attr_go(15n, html, key, False{}, True{})
+    case 9n:
+      match quote_mark:
+        case True{}:
+          html_drop_attr_go(1n, html, key, False{}, False{})
+        case False{}:
+          html_drop_attr_go(2n, html, key, False{}, False{})
+    case 10n:
+      match quote_mark:
+        case True{}:
+          html_drop_attr_go(0n, String.drop(html, 3n), key, False{}, False{})
+        case False{}:
+          html_drop_attr_go(17n, html, key, False{}, False{})
+    case 17n:
+      match html:
+        case SNil{}:
+          ""
+        case SCon{_, t}:
+          html_drop_attr_go(3n, t, key, False{}, False{})
+    case _:
+      ""
+
+def html_drop_attr(+html: String, +key: String) -> String:
+  html_drop_attr_go(0n, html, key, False{}, False{})
+
+def html_attr_quote_kind(single: Bool) -> String:
+  match single:
+    case True{}:
+      "'"
+    case False{}:
+      "\""
+
+def html_attr_quote(+key: String) -> String:
+  html_attr_quote_kind(String.ends_with(key, "'"))
+
+def html_attr_keys_kind(+html: String, +key: String, +double: String, found: Bool) -> String:
+  match found:
+    case True{}:
+      double
+    case False{}:
+      html_drop_attr(html, key ++ "'")
+
+def html_attr_keys(+html: String, +key: String) -> String:
+  +double : String = html_drop_attr(html, key ++ "\"")
+  html_attr_keys_kind(html, key, double, Bool.not(String.is_empty(double)))
+
+def html_attr_ref_pick(+after: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      ""
+    case False{}:
+      html_quote_go(0n, after, "", 'a', False{})
+
+def html_script_tag_attr_kind(+tag: String, +key: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      ""
+    case False{}:
+      +value : String = html_attr_keys(tag, key)
+      html_attr_ref_pick(value, String.is_empty(value))
+
+def html_script_tag_attr(+html: String, +key: String) -> String:
+  +tag : String = html_drop_attr(html, "<script")
+  html_script_tag_attr_kind(tag, key, String.is_empty(tag))
+
+def html_script_src(+html: String) -> String:
+  +tag : String = drop_until_key(html, "<script")
+  +after : String = drop_until_key(tag, "src=\"")
+  html_script_src_pick(after, String.is_empty(after))
+
+def html_attr_ref(+html: String, +key: String) -> String:
+  +after : String = html_attr_keys(html, key)
+  html_attr_ref_pick(after, String.is_empty(after))
+
+@unsafe def html_last_delim_go(sel: Nat, +s: String, last: Char, hit: Bool, c: Char) -> Char:
+  match sel:
+    case 0n:
+      match s:
+        case SNil{}:
+          last
+        case SCon{+h, t}:
+          html_last_delim_go(1n, t, last, Bool.or(Char.is_eq(h, '<'), Char.is_eq(h, '>')), h)
+    case 1n:
+      match hit:
+        case True{}:
+          html_last_delim_go(0n, s, c, False{}, 'a')
+        case False{}:
+          html_last_delim_go(0n, s, last, False{}, 'a')
+    case _:
+      last
+
+def html_tag_active_kind(open: Bool) -> Bool:
+  match open:
+    case True{}:
+      True{}
+    case False{}:
+      False{}
+
+def html_tag_active(+s: String) -> Bool:
+  +last : Char = html_last_delim_go(0n, s, 'a', False{}, 'a')
+  html_tag_active_kind(Char.is_eq(last, '<'))
+
+@unsafe def html_pair_active_go(sel: Nat, +s: String, +open_key: String, +close_key: String, +after_open: String, +after_close: String, found_open: Bool, found_close: Bool) -> Bool:
+  match sel:
+    case 0n:
+      +next_open : String = drop_until_key(s, open_key)
+      html_pair_active_go(1n, s, open_key, close_key, next_open, "", Bool.not(String.is_empty(next_open)), False{})
+    case 1n:
+      match found_open:
+        case False{}:
+          False{}
+        case True{}:
+          +next_close : String = drop_until_key(after_open, close_key)
+          html_pair_active_go(2n, s, open_key, close_key, after_open, next_close, True{}, Bool.not(String.is_empty(next_close)))
+    case 2n:
+      match found_close:
+        case True{}:
+          html_pair_active_go(0n, after_close, open_key, close_key, "", "", False{}, False{})
+        case False{}:
+          True{}
+    case _:
+      False{}
+
+def html_pair_active(+s: String, +open_key: String, +close_key: String) -> Bool:
+  html_pair_active_go(0n, s, open_key, close_key, "", "", False{}, False{})
+
+def html_prefix_valid_kind(tag: Bool, comment: Bool) -> Bool:
+  match comment:
+    case True{}:
+      False{}
+    case False{}:
+      tag
+
+@unsafe def html_attr_candidate_go(sel: Nat, +root: String, +key: String, +search: String, +after: String, +ref: String, +tail: String, found: Bool, valid: Bool) -> String:
+  match sel:
+    case 0n:
+      +next_after : String = drop_until_key(search, key)
+      html_attr_candidate_go(1n, root, key, search, next_after, "", "", Bool.not(String.is_empty(next_after)), False{})
+    case 1n:
+      match found:
+        case False{}:
+          ""
+        case True{}:
+          +prefix_len : Nat = Nat.sub(Nat.sub(String.length(root), String.length(after)), String.length(key))
+          +prefix : String = String.take(root, prefix_len)
+          +tag : Bool = html_tag_active(prefix)
+          +img_tag : Bool = String.contains(prefix, "<img")
+          +tag_or_img : Bool = Bool.or(tag, img_tag)
+          +script_open : Bool = String.contains(prefix, "<script")
+          +script_close : Bool = String.contains(prefix, "</script>")
+          +script_active : Bool = Bool.and(script_open, Bool.not(script_close))
+          +safe_tag : Bool = Bool.and(tag_or_img, Bool.not(script_active))
+          +comment_open : Bool = String.contains(prefix, "<!--")
+          +comment_close : Bool = String.contains(prefix, "-->")
+          +comment : Bool = Bool.and(comment_open, Bool.not(comment_close))
+          html_attr_candidate_go(2n, root, key, search, after, "", "", True{}, html_prefix_valid_kind(safe_tag, comment))
+    case 2n:
+      match valid:
+        case True{}:
+          after
+        case False{}:
+          +value : String = html_quote_go(0n, after, "", 'a', False{})
+          +next_tail : String = String.drop(after, Nat.add(String.length(value), 1n))
+          html_attr_candidate_go(0n, root, key, next_tail, "", "", "", False{}, False{})
+    case _:
+      ""
+
+def html_drop_attr_key(+html: String, +key: String) -> String:
+  html_attr_candidate_go(0n, html, key, html, "", "", "", False{}, False{})
+def html_copy_ref(+file: String, +out: String, +ref: String, local: Bool) -> IO(Unit):
+  match local:
+    case False{}:
+      IO.pure(Unit, Unit{})
+    case True{}:
+      do IO<Unit>:
+        +path : String <- resolve_open(file, ref)
+        IO.try(Unit, Fs.copy(path, Compiler.join_rel(Compiler.dirname(out), Compiler.basename(path))))
+
+def html_rewrite_ref(+html: String, +key: String, +ref: String, +name: String, local: Bool) -> String:
+  match local:
+    case False{}:
+      html
+    case True{}:
+      str_replace(0n, html, key ++ ref ++ "\"", key ++ name ++ "\"", False{}, False{})
+def html_attr_local_state(local: Bool) -> Nat:
+  match local:
+    case True{}:
+      3n
+    case False{}:
+      2n
+
+def html_srcset_join(+segment: String, +more: String, comma: Bool) -> String:
+  match comma:
+    case True{}:
+      segment ++ "," ++ more
+    case False{}:
+      segment ++ more
+
+def html_srcset_replace_kind(+segment: String, +path: String, +target: String, same: Bool) -> String:
+  match same:
+    case True{}:
+      segment
+    case False{}:
+      css_module_replace_go(0n, segment, path, target, False{})
+
+def html_srcset_segment_kind(+rest: String, comma: Bool) -> String:
+  match comma:
+    case True{}:
+      css_drop_last_char(css_take_until_char(rest, ','))
+    case False{}:
+      rest
+
+@unsafe def html_srcset_go(
+  sel: Nat,
+  +rest: String,
+  +file: String,
+  +outdir: String,
+  +template: String,
+  +public: String,
+  +segment: String,
+  +path: String,
+  +tail: String,
+  comma: Bool,
+  local: Bool
+) -> IO(String):
+  match sel:
+    case 0n:
+      match rest:
+        case SNil{}:
+          IO.pure(String, "")
+        case SCon{_, _}:
+          +has_comma : Bool = String.contains(rest, ",")
+          +next_segment : String = html_srcset_segment_kind(rest, has_comma)
+          +next_tail : String = css_drop_after_char(rest, ',')
+          +next_path : String = css_url_word_ref(next_segment)
+          html_srcset_go(1n, next_tail, file, outdir, template, public, next_segment, next_path, next_tail, String.contains(rest, ","), Compiler.is_rel(css_ref_path(next_path)))
+    case _:
+      match local:
+        case False{}:
+          do IO<String>:
+            +more : String <- html_srcset_go(0n, tail, file, outdir, template, public, "", "", "", String.contains(tail, ","), False{})
+            return html_srcset_join(segment, more, comma)
+        case True{}:
+          do IO<String>:
+            +path_file : String <- resolve_open(file, css_ref_path(path))
+            +name : String <- asset_output_name(path_file, template)
+            u : Unit <- IO.try(Unit, Fs.copy(path_file, Compiler.join_rel(outdir, name)))
+            +target : String = asset_public_url(public, name) ++ css_ref_suffix(path, css_ref_path(path))
+            +rewritten : String = html_srcset_replace_kind(segment, path, target, String.eq(path, target))
+            +more : String <- html_srcset_go(0n, tail, file, outdir, template, public, "", "", "", String.contains(tail, ","), False{})
+            return html_srcset_join(rewritten, more, comma)
+
+@unsafe def html_rewrite_srcset_go(sel: Nat, +html: String, +file: String, +outdir: String, +template: String, +public: String, +after: String, +prefix: String, found: Bool) -> IO(String):
+  match sel:
+    case 0n:
+      +next_after : String = html_drop_attr_key(html, "srcset=\"")
+      html_rewrite_srcset_go(1n, html, file, outdir, template, public, next_after, "", Bool.not(String.is_empty(next_after)))
+    case _:
+      match found:
+        case False{}:
+          IO.pure(String, html)
+        case True{}:
+          do IO<String>:
+            +value : String = html_quote_go(0n, after, "", 'a', False{})
+            +prefix_len : Nat = Nat.sub(String.length(html), Nat.add(String.length("srcset=\""), String.length(after)))
+            +next_prefix : String = String.take(html, prefix_len)
+            +tail : String = String.drop(after, Nat.add(String.length(value), 1n))
+            +rewritten : String <- html_srcset_go(0n, value, file, outdir, template, public, "", "", "", False{}, False{})
+            +more : String <- html_rewrite_srcset_go(0n, tail, file, outdir, template, public, "", "", False{})
+            return next_prefix ++ "srcset=\"" ++ rewritten ++ "\"" ++ more
+
+def html_rewrite_srcset(+file: String, +outdir: String, +html: String, +template: String, +public: String) -> IO(String):
+  html_rewrite_srcset_go(0n, html, file, outdir, template, public, "", "", False{})
+
+@unsafe def html_rewrite_attrs_go(
+  sel: Nat,
+  +html: String,
+  +file: String,
+  +outdir: String,
+  +template: String,
+  +public: String,
+  +key: String,
+  +skip: String,
+  +after: String,
+  +prefix: String,
+  +ref: String,
+  +tail: String,
+  ignored: Bool,
+  found: Bool
+) -> IO(String):
+  match sel:
+    case 0n:
+      +next_after : String = html_drop_attr_key(html, key)
+      html_rewrite_attrs_go(1n, html, file, outdir, template, public, key, skip, next_after, "", "", "", False{}, Bool.not(String.is_empty(next_after)))
+    case 1n+p:
+      match p:
+        case 0n:
+          match found:
+            case False{}:
+              IO.pure(String, html)
+            case True{}:
+              +next_ref : String = html_quote_go(0n, after, "", 'a', False{})
+              +prefix_len : Nat = Nat.sub(String.length(html), Nat.add(String.length(key), String.length(after)))
+              +next_prefix : String = String.take(html, prefix_len)
+              +next_tail : String = String.drop(after, Nat.add(String.length(next_ref), 1n))
+              html_rewrite_attrs_go(html_attr_local_state(Compiler.is_rel(next_ref)), next_tail, file, outdir, template, public, key, skip, "", next_prefix, next_ref, next_tail, String.eq(next_ref, skip), True{})
+        case 1n+p2:
+          match p2:
+            case 0n:
+              do IO<String>:
+                +more : String <- html_rewrite_attrs_go(0n, tail, file, outdir, template, public, key, skip, "", "", "", "", False{}, False{})
+                return prefix ++ key ++ ref ++ html_attr_quote(key) ++ more
+            case _:
+              match ignored:
+                case True{}:
+                  do IO<String>:
+                    +more : String <- html_rewrite_attrs_go(0n, tail, file, outdir, template, public, key, skip, "", "", "", "", False{}, False{})
+                    return prefix ++ key ++ ref ++ html_attr_quote(key) ++ more
+                case False{}:
+                  do IO<String>:
+                    +path : String <- resolve_open(file, css_ref_path(ref))
+                    +name : String <- asset_output_name(path, template)
+                    u : Unit <- IO.try(Unit, Fs.copy(path, Compiler.join_rel(outdir, name)))
+                    +more : String <- html_rewrite_attrs_go(0n, tail, file, outdir, template, public, key, skip, "", "", "", "", False{}, False{})
+                    return prefix ++ key ++ asset_public_url(public, name) ++ css_ref_suffix(ref, css_ref_path(ref)) ++ html_attr_quote(key) ++ more
+
+def html_rewrite_attrs(+file: String, +outdir: String, +html: String, +key: String, +skip: String, +template: String, +public: String) -> IO(String):
+  html_rewrite_attrs_go(0n, html, file, outdir, template, public, key, skip, "", "", "", "", False{}, False{})
+
+def html_css_local(+ref: String) -> Bool:
+  +remote : Bool = Bool.or(Bool.or(String.starts_with(ref, "http:"), String.starts_with(ref, "https:")), Bool.or(String.starts_with(ref, "//"), Bool.or(String.starts_with(ref, "/"), String.starts_with(ref, "data:"))))
+  Bool.and(String.ends_with(css_ref_path(ref), ".css"), Bool.or(Compiler.is_rel(ref), Bool.not(remote)))
+
+
+def html_css_anchor(+out: String) -> String:
+  String.take(out, Nat.sub(String.length(out), 3n)) ++ "js"
+
+def html_bundle_css_one(+file: String, +outdir: String, +conds: String, +format: String, +ref: String) -> IO(Unit):
+  do IO<Unit>:
+    +path : String <- resolve_open(file, css_ref_path(ref))
+    +graph : List<&2, String> <- bundle_files_conds(path, external_conds(conds, format))
+    +out : String = Compiler.join_rel(outdir, Compiler.basename(path))
+    +css : String <- emit_css_files(graph, outdir, "", build_format_marker(format, "asset"), build_format_marker(format, "public"), build_minify_enabled(format))
+    u0 : Unit <- write_css_if(html_css_anchor(out), css, String.is_empty(css), build_format_marker(format, "sourcemap"), graph)
+    u1 : Unit <- write_css_map_if(html_css_anchor(out), css, graph, build_format_marker(format, "sourcemap"), String.is_empty(css))
+    copy_assets(graph, out, build_format_marker(format, "asset"))
+
+
+
+@unsafe def html_bundle_css_go(
+  sel: Nat,
+  +html: String,
+  +file: String,
+  +outdir: String,
+  +conds: String,
+  +format: String,
+  +after: String,
+  +ref: String,
+  tail: String,
+  found: Bool,
+  local: Bool
+) -> IO(Unit):
+  match sel:
+    case 0n:
+      +next : String = html_drop_attr_key(html, "href=\"")
+      html_bundle_css_go(1n, html, file, outdir, conds, format, next, "", "", Bool.not(String.is_empty(next)), False{})
+    case 1n:
+      match found:
+        case False{}:
+          IO.pure(Unit, Unit{})
+        case True{}:
+          do IO<Unit>:
+            +next_ref : String = html_quote_go(0n, after, "", 'a', False{})
+            +next_tail : String = String.drop(after, Nat.add(String.length(next_ref), 1n))
+            html_bundle_css_go(2n, html, file, outdir, conds, format, "", next_ref, next_tail, False{}, html_css_local(next_ref))
+    case _:
+      match local:
+        case True{}:
+          do IO<Unit>:
+            u : Unit <- html_bundle_css_one(file, outdir, conds, format, ref)
+            html_bundle_css_go(0n, tail, file, outdir, conds, format, "", "", "", False{}, False{})
+        case False{}:
+          html_bundle_css_go(0n, tail, file, outdir, conds, format, "", "", "", False{}, False{})
+
+def html_bundle_css(+file: String, +outdir: String, +conds: String, +format: String, +html: String) -> IO(Unit):
+  html_bundle_css_go(0n, html, file, outdir, conds, format, "", "", "", False{}, False{})
+
+
+def html_write_src(+file: String, +out: String, +conds: String, +meta: String, +format: String, +raw: String, +src: String, empty: Bool) -> IO(Unit):
+  match empty:
+    case True{}:
+      IO.die(Unit, 2, "knot: HTML entry requires a module script src (unsupported_html)")
+    case False{}:
+      do IO<Unit>:
+        +asset_template : String = build_format_marker(format, "asset")
+        +public : String = build_format_marker(format, "public")
+        +html_href : String <- html_rewrite_attrs(file, Compiler.dirname(out), raw, "href=\"", "", asset_template, public)
+        +html_poster : String <- html_rewrite_attrs(file, Compiler.dirname(out), html_href, "poster=\"", "", asset_template, public)
+        +html_srcsets : String <- html_rewrite_srcset(file, Compiler.dirname(out), html_poster, asset_template, public)
+        +html_refs : String <- html_rewrite_attrs(file, Compiler.dirname(out), html_srcsets, "src=\"", src, asset_template, public)
+        u1 : Unit <- html_bundle_css(file, Compiler.dirname(out), conds, format, raw)
+        +script : String <- resolve_open(file, src)
+        +js_out : String = Compiler.join_rel(Compiler.dirname(out), Compiler.basename(Compiler.js_path(script)))
+        u2 : Unit <- bundle_write_opts_format(script, js_out, conds, "", format)
+        +old_src : String = "src=\"" ++ src ++ "\""
+        +new_src : String = "src=\"" ++ Compiler.basename(Compiler.js_path(script)) ++ "\""
+        +html : String = str_replace(0n, html_refs, old_src, new_src, False{}, False{})
+        u3 : Unit <- write_text_atomic(out, html)
+        return Unit{}
+
+def html_write(+file: String, +out: String, +conds: String, +meta: String, +format: String) -> IO(Unit):
+  do IO<Unit>:
+    raw : String <- read_text(file)
+    scan : String <- read_text(file)
+    +src : String = html_script_src(scan)
+    html_write_src(file, out, conds, meta, format, raw, src, String.is_empty(src))
+def bundle_write_entry(+file: String, +out: String, +conds: String, +meta: String, +format: String, html: Bool) -> IO(Unit):
+  match html:
+    case True{}:
+      html_write(file, out, conds, meta, format)
+    case False{}:
+      bundle_write_opts_format(file, out, conds, meta, format)
+
+def html_output_pick(+file: String, +out: String, +outdir: String, out_empty: Bool, dir_empty: Bool) -> IO(String):
+  match out_empty:
+    case False{}:
+      match dir_empty:
+        case True{}:
+          IO.pure(String, out)
+        case False{}:
+          IO.die(String, 2, "knot: --outfile and --outdir cannot be combined (unknown_command)")
+    case True{}:
+      match dir_empty:
+        case True{}:
+          IO.die(String, 2, "knot: HTML build requires --outfile or --outdir (unknown_command)")
+        case False{}:
+          IO.pure(String, Compiler.join_rel(outdir, Compiler.basename(file)))
+
+
 
 def conds_add(+extra: String, +acc: String, empty: Bool) -> String:
   match empty:
@@ -3760,74 +6207,1104 @@ def conds_join_e(empty: Bool, +extra: String) -> String:
 def conds_join(+extra: String) -> String:
   conds_join_e(String.is_empty(extra), extra)
 
-@unsafe def run_build_k(sel: Nat, args: List<&2, String>, +file: String, +out: String, +conds: String, +meta: String, +head: String, rest: List<&2, String>, +which: String, +val: String, b0: Bool, b1: Bool, b2: Bool) -> IO(Unit):
+def bundle_output_pick(+file: String, +out: String, +outdir: String, out_empty: Bool, dir_empty: Bool) -> IO(String):
+  match out_empty:
+    case False{}:
+      match dir_empty:
+        case True{}:
+          IO.pure(String, out)
+        case False{}:
+          IO.die(String, 2, "knot: --outfile and --outdir cannot be combined (unknown_command)")
+    case True{}:
+      match dir_empty:
+        case True{}:
+          IO.pure(String, Compiler.js_path(file))
+        case False{}:
+          IO.pure(String, Compiler.join_rel(outdir, Compiler.basename(Compiler.js_path(file))))
+
+def bundle_output_pick_kind(+file: String, +out: String, +outdir: String, out_empty: Bool, dir_empty: Bool, html: Bool) -> IO(String):
+  match html:
+    case True{}:
+      html_output_pick(file, out, outdir, out_empty, dir_empty)
+    case False{}:
+      bundle_output_pick(file, out, outdir, out_empty, dir_empty)
+def entry_stem_kind(+file: String, html: Bool) -> String:
+  match html:
+    case True{}:
+      String.take(Compiler.basename(file), Nat.sub(String.length(Compiler.basename(file)), 5n))
+    case False{}:
+      +base : String = Compiler.basename(Compiler.js_path(file))
+      String.take(base, Nat.sub(String.length(base), 3n))
+
+def entry_template_parts(+file: String, html: Bool) -> String & String:
+  match html:
+    case True{}:
+      (String.take(Compiler.basename(file), Nat.sub(String.length(Compiler.basename(file)), 5n)), "html")
+    case False{}:
+      +base : String = Compiler.basename(Compiler.js_path(file))
+      (String.take(base, Nat.sub(String.length(base), 3n)), "js")
+
+def entry_template_name_kind(+template: String, +hash: String, parts: String & String) -> String:
+  (stem, ext) = parts
+  +name0 : String = css_module_replace_go(0n, template, "[name]", stem, False{})
+  +name1 : String = css_module_replace_go(0n, name0, "[ext]", ext, False{})
+  +name2 : String = css_module_replace_go(0n, name1, "[hash]", hash, False{})
+  css_module_replace_go(0n, name2, "[dir]", "", False{})
+
+def entry_template_name(+file: String, +template: String, +hash: String, html: Bool) -> String:
+  entry_template_name_kind(template, hash, entry_template_parts(file, html))
+
+def build_entry_output_kind(+file: String, +chosen: String, +outdir: String, +format: String, html: Bool, empty: Bool) -> IO(String):
+  match empty:
+    case True{}:
+      IO.pure(String, chosen)
+    case False{}:
+      do IO<String>:
+        +template : String = build_format_marker(format, "entry-names")
+        +hash : String <- asset_hash_prefix(file)
+        +name : String = entry_template_name(file, template, hash, html)
+        IO.pure(String, Compiler.join_rel(outdir, name))
+
+def build_entry_output(+file: String, +chosen: String, +outdir: String, +format: String, html: Bool) -> IO(String):
+  build_entry_output_kind(file, chosen, outdir, format, html, String.is_empty(build_format_marker(format, "entry-names")))
+
+def output_check_code(first: Bool, prev_dot: Bool, slash: Bool, dot: Bool) -> Nat:
+  match first:
+    case True{}:
+      match slash:
+        case True{}:
+          match dot:
+            case True{}:
+              3n
+            case False{}:
+              2n
+        case False{}:
+          match dot:
+            case True{}:
+              1n
+            case False{}:
+              0n
+    case False{}:
+      match prev_dot:
+        case True{}:
+          match dot:
+            case True{}:
+              3n
+            case False{}:
+              0n
+        case False{}:
+          match dot:
+            case True{}:
+              1n
+            case False{}:
+              0n
+
+def output_check_finish(+acc: String, safe: Bool) -> String:
+  match safe:
+    case True{}:
+      String.reverse(acc)
+    case False{}:
+      ""
+
+@unsafe def output_check_go(sel: Nat, +path: String, +acc: String, first: Bool, prev_dot: Bool, safe: Bool, c: Char, dot: Bool, slash: Bool, code: Nat) -> String:
+  match sel:
+    case 0n:
+      match path:
+        case SNil{}:
+          output_check_finish(acc, safe)
+        case SCon{+h, t}:
+          +is_slash : Bool = Char.is_eq(h, '/')
+          +is_dot : Bool = Char.is_eq(h, '.')
+          output_check_go(1n, t, acc, first, prev_dot, safe, h, is_dot, is_slash, 0n)
+    case 1n:
+      output_check_go(2n, path, acc, False{}, False{}, safe, c, False{}, False{}, output_check_code(first, prev_dot, slash, dot))
+    case _:
+      match code:
+        case 0n:
+          output_check_go(0n, path, SCon{c, acc}, False{}, False{}, safe, 'a', False{}, False{}, 0n)
+        case 1n:
+          output_check_go(0n, path, SCon{c, acc}, False{}, True{}, safe, 'a', False{}, False{}, 0n)
+        case 2n:
+          output_check_go(0n, path, SCon{c, acc}, False{}, False{}, False{}, 'a', False{}, False{}, 0n)
+        case _:
+          output_check_go(0n, path, SCon{c, acc}, False{}, True{}, False{}, 'a', False{}, False{}, 0n)
+
+def output_path_checked(+path: String) -> String:
+  output_check_go(0n, path, "", True{}, False{}, True{}, 'a', False{}, False{}, 0n)
+
+def bundle_write_checked_result(+file: String, +output: String, +conds: String, +meta: String, +format: String, html: Bool) -> IO(Unit):
+  match output:
+    case SNil{}:
+      IO.die(Unit, 2, "knot: output path escapes the project (unsafe_output)")
+    case SCon{h, t}:
+      bundle_write_entry(file, SCon{h, t}, conds, meta, format, html)
+
+def bundle_write_checked(+file: String, +output: String, +conds: String, +meta: String, +format: String, html: Bool) -> IO(Unit):
+  +checked : String = output_path_checked(output)
+  bundle_write_checked_result(file, checked, conds, meta, format, html)
+
+def build_meta_flag(+flag: String) -> String:
+  match flag:
+    case "--manifest":
+      "manifest"
+    case "--metafile":
+      "metafile"
+    case "--target":
+      "target"
+    case "--loader":
+      "loader"
+    case "--external":
+      "external"
+    case "--define":
+      "define"
+    case "--drop":
+      "drop"
+    case "--entry-names":
+      "entry-names"
+    case "--entry-naming":
+      "entry-names"
+    case "--chunk-names":
+      "chunk-names"
+    case "--chunk-naming":
+      "chunk-names"
+    case "--asset-names":
+      "asset-names"
+    case "--asset-naming":
+      "asset-names"
+    case "--css-naming":
+      "css-naming"
+    case "--root":
+      "root"
+    case "--packages":
+      "packages"
+    case "--min-chunk-size":
+      "min-chunk-size"
+    case "--sources-content":
+      "sources-content"
+    case "--clear-on-error":
+      "clear-on-error"
+    case "--ignore-side-effects-annotations":
+      "ignore-side-effects-annotations"
+    case "--log-level":
+      "log-level"
+    case "--diagnostics":
+      "diagnostics"
+    case "--cpu":
+      "cpu"
+    case "--gpu":
+      "gpu"
+    case "--write":
+      "write"
+    case "--charset":
+      "charset"
+    case "--platform":
+      "platform"
+    case "--tsconfig-raw":
+      "tsconfig-raw"
+    case _:
+      "metafile"
+
+def build_extra_value_flag(+flag: String) -> Bool:
+  match flag:
+    case "--target":
+      True{}
+    case "--loader":
+      True{}
+    case "--external":
+      True{}
+    case "--define":
+      True{}
+    case "--drop":
+      True{}
+    case "--entry-names":
+      True{}
+    case "--chunk-names":
+      True{}
+    case "--asset-names":
+      True{}
+    case "--entry-naming":
+      True{}
+    case "--chunk-naming":
+      True{}
+    case "--css-naming":
+      True{}
+    case "--root":
+      True{}
+    case "--packages":
+      True{}
+    case "--min-chunk-size":
+      True{}
+    case "--sources-content":
+      True{}
+    case "--clear-on-error":
+      True{}
+    case "--ignore-side-effects-annotations":
+      True{}
+    case "--log-level":
+      True{}
+    case "--diagnostics":
+      True{}
+    case "--cpu":
+      True{}
+    case "--gpu":
+      True{}
+    case "--write":
+      True{}
+    case "--charset":
+      True{}
+    case "--platform":
+      True{}
+    case "--tsconfig-raw":
+      True{}
+    case _:
+      False{}
+
+def build_value_flag(+flag: String) -> Bool:
+  Bool.or(String.eq(flag, "--manifest"), Bool.or(String.eq(flag, "--metafile"), build_extra_value_flag(flag)))
+@unsafe def build_expand_args_go(sel: Nat, +args: List<&2, String>, +head: String, +tail: List<&2, String>, inline: Bool) -> List<&2, String>:
   match sel:
     case 0n:
       match args:
         case Nil{}:
-          run_build_k(20n, Nil{}, file, out, conds, meta, "", Nil{}, "", "", String.is_empty(file), String.is_empty(out), False{})
+          Nil{}
+        case Con{+h, rest}:
+          build_expand_args_go(1n, rest, h, rest, Bool.and(String.starts_with(h, "--"), String.contains(h, "=")))
+    case 1n:
+      match inline:
+        case True{}:
+          +key : String = css_drop_last_char(css_take_until_char(head, '='))
+          +value : String = String.drop(head, Nat.add(String.length(key), 1n))
+          +more : List<&2, String> = build_expand_args_go(0n, tail, "", Nil{}, False{})
+          Con{key, Con{value, more}}
+        case False{}:
+          +more : List<&2, String> = build_expand_args_go(0n, tail, "", Nil{}, False{})
+          Con{head, more}
+    case _:
+      Nil{}
+
+def build_expand_args(+args: List<&2, String>) -> List<&2, String>:
+  build_expand_args_go(0n, args, "", Nil{}, False{})
+
+def is_meta_flag(+which: String) -> Bool:
+  match which:
+    case "manifest":
+      True{}
+    case "metafile":
+      True{}
+    case "target":
+      True{}
+    case "loader":
+      True{}
+    case "external":
+      True{}
+    case "define":
+      True{}
+    case "drop":
+      True{}
+    case "entry-names":
+      True{}
+    case "chunk-names":
+      True{}
+    case "asset-names":
+      True{}
+    case "css-naming":
+      True{}
+    case "root":
+      True{}
+    case "packages":
+      True{}
+    case "min-chunk-size":
+      True{}
+    case "sources-content":
+      True{}
+    case "clear-on-error":
+      True{}
+    case "ignore-side-effects-annotations":
+      True{}
+    case "log-level":
+      True{}
+    case "diagnostics":
+      True{}
+    case "cpu":
+      True{}
+    case "gpu":
+      True{}
+    case "write":
+      True{}
+    case "charset":
+      True{}
+    case "platform":
+      True{}
+    case "tsconfig-raw":
+      True{}
+    case _:
+      False{}
+
+def build_meta_value(+meta: String, +which: String, +val: String) -> String:
+  match which:
+    case "manifest":
+      "manifest:" ++ val
+    case "metafile":
+      val
+    case _:
+      meta
+
+def build_option_format(+format: String, +which: String, +val: String) -> String:
+  match which:
+    case "manifest":
+      format
+    case "metafile":
+      format
+    case "target":
+      format ++ ";target=" ++ val
+    case "loader":
+      format ++ ";loader=" ++ val
+    case "external":
+      format ++ ";external=" ++ val
+    case "define":
+      format ++ ";define=" ++ val
+    case "drop":
+      format ++ ";drop=" ++ val
+    case "entry-names":
+      format ++ ";entry-names=" ++ val
+    case "chunk-names":
+      format ++ ";chunk-names=" ++ val
+    case "asset-names":
+      format ++ ";asset=" ++ val
+    case "css-naming":
+      format ++ ";css-naming=" ++ val
+    case "root":
+      format ++ ";root=" ++ val
+    case "packages":
+      format ++ ";packages=" ++ val
+    case "min-chunk-size":
+      format ++ ";min-chunk-size=" ++ val
+    case "sources-content":
+      format ++ ";sources-content=" ++ val
+    case "clear-on-error":
+      format ++ ";clear-on-error=" ++ val
+    case "ignore-side-effects-annotations":
+      format ++ ";ignore-side-effects-annotations=" ++ val
+    case "log-level":
+      format ++ ";log-level=" ++ val
+    case "diagnostics":
+      format ++ ";diagnostics=" ++ val
+    case "cpu":
+      format ++ ";cpu=" ++ val
+    case "gpu":
+      format ++ ";gpu=" ++ val
+    case "write":
+      format ++ ";write=" ++ val
+    case "charset":
+      format ++ ";charset=" ++ val
+    case "platform":
+      format ++ ";platform=" ++ val
+    case "tsconfig-raw":
+      format ++ ";tsconfig-raw=" ++ val
+    case _:
+      format
+def manifest_many_append(+acc: String, +piece: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      piece
+    case False{}:
+      acc ++ "," ++ piece
+
+def manifest_many_css(+path: String, present: Bool) -> IO(String & Bool):
+  match present:
+    case True{}:
+      do IO<String & Bool>:
+        +css : String <- read_text(path)
+        return (css, False{})
+    case False{}:
+      IO.pure(String & Bool, ("", True{}))
+
+def manifest_many_output_piece(+out: String, +js: String, css_info: String & Bool, +assets: String, +dynamic: String, +digest: String, +mode: String) -> IO(String):
+  (css, css_empty) = css_info
+  do IO<String>:
+    +css_output : String <- manifest_css(out, css, css_empty, mode)
+    return Compiler.json_str(out) ++ ":{\"kind\":\"js\",\"bytes\":" ++ Nat.show(String.length(js)) ++ ",\"digest\":" ++ Compiler.json_str(digest) ++ manifest_source_map_field(out, mode) ++ "}" ++ css_output ++ assets ++ dynamic
+
+@unsafe def manifest_many_go(
+  files: List<&2, String>,
+  +outdir: String,
+  +conds: String,
+  +format: String,
+  +entries: String,
+  +outputs: String
+) -> IO(String & String):
+  match files:
+    case Nil{}:
+      IO.pure(String & String, (entries, outputs))
+    case Con{+file, rest}:
+      do IO<String & String>:
+        +output : String <- bundle_output_pick_kind(file, "", outdir, True{}, False{}, String.ends_with(file, ".html"))
+        u : Unit <- bundle_write_checked(file, output, conds, "", format, String.ends_with(file, ".html"))
+        raw : String <- read_text(file)
+        src : String <- normalize_source(raw)
+        js : String <- read_text(output)
+        +css_file : String = css_path(output)
+        css_present : Bool <- file_exists(css_file)
+        css_info : String & Bool <- manifest_many_css(css_file, css_present)
+        +digest : String <- IO.try(String, Hash.sha256_b64(output))
+        graph : List<&2, String> <- bundle_files_conds(file, external_conds(conds, format))
+        +dynamic : String <- manifest_dyn(file, Compiler.dirname(output), Compiler.dyn_imports_of(src), sourcemap_mode(build_format_marker(format, "sourcemap")))
+        +assets : String <- manifest_assets(output, graph, build_format_marker(format, "asset"))
+        +entry : String = Compiler.json_str(Compiler.basename(file)) ++ ":" ++ Compiler.json_str(output)
+        +output_piece : String <- manifest_many_output_piece(output, js, css_info, assets, dynamic, digest, sourcemap_mode(build_format_marker(format, "sourcemap")))
+        +more : String & String <- manifest_many_go(rest, outdir, conds, format, manifest_many_append(entries, entry, String.is_empty(entries)), manifest_many_append(outputs, output_piece, String.is_empty(outputs)))
+        return more
+
+@unsafe def manifest_collect_go(
+  files: List<&2, String>,
+  +outdir: String,
+  +conds: String,
+  +format: String,
+  +entries: String,
+  +outputs: String
+) -> IO(String & String):
+  match files:
+    case Nil{}:
+      IO.pure(String & String, (entries, outputs))
+    case Con{+file, rest}:
+      do IO<String & String>:
+        +output : String <- bundle_output_pick_kind(file, "", outdir, True{}, False{}, String.ends_with(file, ".html"))
+        raw : String <- read_text(file)
+        +src : String <- normalize_source(raw)
+        js : String <- read_text(output)
+        +css_file : String = css_path(output)
+        css_present : Bool <- file_exists(css_file)
+        css_info : String & Bool <- manifest_many_css(css_file, css_present)
+        +digest : String <- IO.try(String, Hash.sha256_b64(output))
+        graph : List<&2, String> <- bundle_files_conds(file, external_conds(conds, format))
+        +dynamic : String <- manifest_dyn(file, Compiler.dirname(output), Compiler.dyn_imports_of(src), sourcemap_mode(build_format_marker(format, "sourcemap")))
+        +assets : String <- manifest_assets(output, graph, build_format_marker(format, "asset"))
+        +entry : String = Compiler.json_str(Compiler.basename(file)) ++ ":" ++ Compiler.json_str(output)
+        +output_piece : String <- manifest_many_output_piece(output, js, css_info, assets, dynamic, digest, sourcemap_mode(build_format_marker(format, "sourcemap")))
+        +more : String & String <- manifest_collect_go(rest, outdir, conds, format, manifest_many_append(entries, entry, String.is_empty(entries)), manifest_many_append(outputs, output_piece, String.is_empty(outputs)))
+        return more
+
+def manifest_shared_chunk_kind(+path: String, exists: Bool, +mode: String) -> IO(String):
+  match exists:
+    case True{}:
+      do IO<String>:
+        +chunk : String <- read_text(path)
+        +digest : String <- IO.try(String, Hash.sha256_b64(path))
+        return "," ++ Compiler.json_str(path) ++ ":{\"bytes\":" ++ Nat.show(String.length(chunk)) ++ ",\"kind\":\"chunk\",\"digest\":" ++ Compiler.json_str(digest) ++ manifest_source_map_field(path, mode) ++ "}"
+    case False{}:
+      IO.pure(String, "")
+
+def manifest_shared_chunk(+outdir: String, +chunk: String, +mode: String) -> IO(String):
+  +path : String = Compiler.join_rel(outdir, chunk)
+  do IO<String>:
+    exists : Bool <- file_exists(path)
+    manifest_shared_chunk_kind(path, exists, mode)
+
+
+def build_entries_manifest_done(+meta: String, parts: String & String) -> IO(Unit):
+  (entries, outputs) = parts
+  write_text_atomic(String.drop(meta, 9n), "{\"version\":1,\"entries\":{" ++ entries ++ "},\"outputs\":{" ++ outputs ++ "}}")
+
+def build_entries_manifest(+file: String, +outdir: String, +conds: String, +meta: String, +format: String) -> IO(Unit):
+  do IO<Unit>:
+    parts : String & String <- manifest_many_go(String.lines(file), outdir, conds_join(conds), format, "", "")
+    build_entries_manifest_done(meta, parts)
+
+
+@unsafe def list_intersect_go(sel: Nat, +files: List<&2, String>, +other: List<&2, String>, +acc: List<&2, String>, +h: String, seen: Bool) -> List<&2, String>:
+  match sel:
+    case 0n:
+      match files:
+        case Nil{}:
+          acc
+        case Con{+head, rest}:
+          list_intersect_go(1n, rest, other, acc, head, has_file(0n, other, head, False{}))
+    case _:
+      match seen:
+        case True{}:
+          list_intersect_go(0n, files, other, list_app(acc, h), "", False{})
+        case False{}:
+          list_intersect_go(0n, files, other, acc, "", False{})
+
+def list_intersect(files: List<&2, String>, other: List<&2, String>) -> List<&2, String>:
+  list_intersect_go(0n, files, other, Nil{}, "", False{})
+
+@unsafe def list_diff_go(sel: Nat, +files: List<&2, String>, +shared: List<&2, String>, +acc: List<&2, String>, +h: String, seen: Bool) -> List<&2, String>:
+  match sel:
+    case 0n:
+      match files:
+        case Nil{}:
+          acc
+        case Con{+head, rest}:
+          list_diff_go(1n, rest, shared, acc, head, has_file(0n, shared, head, False{}))
+    case _:
+      match seen:
+        case True{}:
+          list_diff_go(0n, files, shared, acc, "", False{})
+        case False{}:
+          list_diff_go(0n, files, shared, list_app(acc, h), "", False{})
+
+def list_diff(files: List<&2, String>, shared: List<&2, String>) -> List<&2, String>:
+  list_diff_go(0n, files, shared, Nil{}, "", False{})
+
+
+@unsafe def shared_entries_go(sel: Nat, files: List<&2, String>, shared: List<&2, String>, first: Bool, +conds: String, graph: List<&2, String>) -> IO(List<&2, String>):
+  match sel:
+    case 0n:
+      match files:
+        case Nil{}:
+          IO.pure(List<&2, String>, shared)
+        case Con{+file, rest}:
+          do IO<List<&2, String>>:
+            next_graph : List<&2, String> <- bundle_files_conds(file, conds)
+            shared_entries_go(1n, rest, shared, first, conds, next_graph)
+    case _:
+      match first:
+        case True{}:
+          shared_entries_go(0n, files, graph, False{}, conds, Nil{})
+        case False{}:
+          shared_entries_go(0n, files, list_intersect(shared, graph), False{}, conds, Nil{})
+
+@unsafe def collect_keep_entries_go(files: List<&2, String>, +conds: String, +acc: List<&2, String>) -> IO(List<&2, String>):
+  match files:
+    case Nil{}:
+      IO.pure(List<&2, String>, acc)
+    case Con{+file, rest}:
+      do IO<List<&2, String>>:
+        graph : List<&2, String> <- bundle_files_conds(file, conds)
+        keep : List<&2, String> <- collect_keep(graph)
+        collect_keep_entries_go(rest, conds, strs_cat(acc, keep))
+
+@unsafe def list_unique_go(sel: Nat, +xs: List<&2, String>, +acc: List<&2, String>, +h: String, seen: Bool) -> List<&2, String>:
+  match sel:
+    case 0n:
+      match xs:
+        case Nil{}:
+          acc
+        case Con{+head, rest}:
+          list_unique_go(1n, rest, acc, head, has_file(0n, acc, head, False{}))
+    case _:
+      match seen:
+        case True{}:
+          list_unique_go(0n, xs, acc, "", False{})
+        case False{}:
+          list_unique_go(0n, xs, list_app(acc, h), "", False{})
+
+def list_unique(xs: List<&2, String>) -> List<&2, String>:
+  list_unique_go(0n, xs, Nil{}, "", False{})
+
+@unsafe def shared_exports_go(files: List<&2, String>, +acc: List<&2, String>) -> IO(List<&2, String>):
+  match files:
+    case Nil{}:
+      IO.pure(List<&2, String>, acc)
+    case Con{+file, rest}:
+      do IO<List<&2, String>>:
+        raw : String <- read_text(file)
+        src : String <- normalize_source(raw)
+        names : List<&2, String> <- shared_exports_go(rest, list_unique(strs_cat(acc, Compiler.exports_of(src))))
+        return names
+
+
+def shared_import_item_kind(+name: String, default: Bool) -> String:
+  match default:
+    case True{}:
+      "default as __knot_default_value"
+    case False{}:
+      name
+
+def shared_import_item(+name: String) -> String:
+  shared_import_item_kind(name, String.eq(name, "default"))
+
+def shared_import_next(+acc: String, +item: String, first: Bool) -> String:
+  match first:
+    case True{}:
+      item
+    case False{}:
+      acc ++ ", " ++ item
+
+@unsafe def shared_import_names_go(+names: List<&2, String>, +acc: String, first: Bool) -> String:
+  match names:
+    case Nil{}:
+      acc
+    case Con{+h, rest}:
+      +item : String = shared_import_item(h)
+      shared_import_names_go(rest, shared_import_next(acc, item, first), False{})
+
+def shared_import_prefix_items(+chunk: String, +items: String, none: Bool) -> String:
+  match none:
+    case True{}:
+      "import \"./" ++ Compiler.basename(chunk) ++ "\";\n"
+    case False{}:
+      "import { " ++ items ++ " } from \"./" ++ Compiler.basename(chunk) ++ "\";\n"
+
+def shared_import_prefix_kind(+chunk: String, +items: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      ""
+    case False{}:
+      shared_import_prefix_items(chunk, items, String.is_empty(items))
+
+def shared_import_prefix(+chunk: String, names: List<&2, String>) -> String:
+  shared_import_prefix_kind(chunk, shared_import_names_go(names, "", True{}), String.is_empty(chunk))
+
+def write_shared_chunk_esm(shared: List<&2, String>, +keep: List<&2, String>, +chunk: String, +outdir: String, names: List<&2, String>) -> IO(Unit):
+  do IO<Unit>:
+    js : String <- emit_files(shared, keep, False{}, False{}, "")
+    +body : String = js ++ "\n" ++ esm_exports_go(names, "")
+    transpile_ok_to(Compiler.join_rel(outdir, chunk), body, Compiler.make_map(chunk, Nil{}), "linked")
+
+@unsafe def build_entries_shared_go(files: List<&2, String>, +outdir: String, +conds: String, +format: String, +shared: List<&2, String>, +keep: List<&2, String>, +chunk: String, +names: List<&2, String>) -> IO(Unit):
+  match files:
+    case Nil{}:
+      IO.pure(Unit, Unit{})
+    case Con{+file, rest}:
+      do IO<Unit>:
+        +output : String <- bundle_output_pick_kind(file, "", outdir, True{}, False{}, False{})
+        +graph : List<&2, String> <- bundle_files_conds(file, conds)
+        +unique : List<&2, String> = list_diff(graph, shared)
+        +js0 : String <- emit_files(unique, keep, build_minify_enabled(format), String.eq(build_format_marker(format, "minify-identifiers"), "true"), build_format_marker(format, "loader"))
+        js : String <- rewrite_asset_refs(unique, js0, build_format_marker(format, "asset"), build_format_marker(format, "public"))
+        raw : String <- read_text(file)
+        +src : String <- normalize_source(raw)
+        formatted : String <- bundle_format_pick(format, src, js, String.eq(format, "cjs"), String.eq(format, "esm"))
+        +output_src : String = shared_import_prefix(chunk, names) ++ formatted
+        u0 : Unit <- bundle_preflight(file, src)
+        u1 : Unit <- transpile_ok_to(output, output_src, Compiler.make_map(file, Nil{}), sourcemap_mode(build_format_marker(format, "sourcemap")))
+        +css : String <- emit_css_files(graph, Compiler.dirname(css_path(output)), "", build_format_marker(format, "asset"), build_format_marker(format, "public"), build_minify_enabled(format))
+        u2 : Unit <- write_css_if(output, css, String.is_empty(css), build_format_marker(format, "sourcemap"), graph)
+        u3 : Unit <- write_css_map_if(output, css, graph, build_format_marker(format, "sourcemap"), String.is_empty(css))
+        u4 : Unit <- copy_assets(graph, output, build_format_marker(format, "asset"))
+        u5 : Unit <- bundle_write_dyn(file, output, src, build_format_marker(format, "public"), sourcemap_mode(build_format_marker(format, "sourcemap")))
+        build_entries_shared_go(rest, outdir, conds, format, shared, keep, chunk, names)
+
+def build_entries_plain_go(files: List<&2, String>, +outdir: String, +conds: String, +format: String) -> IO(Unit):
+  match files:
+    case Nil{}:
+      IO.pure(Unit, Unit{})
+    case Con{+file, rest}:
+      do IO<Unit>:
+        +output : String <- bundle_output_pick_kind(file, "", outdir, True{}, False{}, String.ends_with(file, ".html"))
+        u : Unit <- bundle_write_checked(file, output, conds, "", format, String.ends_with(file, ".html"))
+        build_entries_plain_go(rest, outdir, conds, format)
+
+def entries_have_html(+files: List<&2, String>) -> Bool:
+  match files:
+    case Nil{}:
+      False{}
+    case Con{+file, rest}:
+      Bool.or(String.ends_with(file, ".html"), entries_have_html(rest))
+
+def list_is_empty(+xs: List<&2, String>) -> Bool:
+  match xs:
+    case Nil{}:
+      True{}
+    case Con{_, _}:
+      False{}
+
+def write_shared_chunk_if(shared: List<&2, String>, keep: List<&2, String>, +chunk: String, +outdir: String, names: List<&2, String>, empty: Bool) -> IO(Unit):
+  match empty:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      write_shared_chunk_esm(shared, keep, chunk, outdir, names)
+
+def shared_chunk_template_kind(empty: Bool, +template: String) -> String:
+  match empty:
+    case True{}:
+      ""
+    case False{}:
+      match template:
+        case "":
+          "knot-shared.js"
+        case _:
+          entry_template_name("shared.ts", template, "", False{})
+
+def shared_chunk_name(empty: Bool, +template: String) -> String:
+  shared_chunk_template_kind(empty, template)
+
+def build_entries_shared_esm(+file: String, +outdir: String, +conds: String, +format: String) -> IO(Unit):
+  do IO<Unit>:
+    +shared : List<&2, String> <- shared_entries_go(0n, String.lines(file), Nil{}, True{}, conds, Nil{})
+    +keep : List<&2, String> <- collect_keep_entries_go(String.lines(file), conds, Nil{})
+    +names : List<&2, String> <- shared_exports_go(shared, Nil{})
+    +chunk : String = shared_chunk_name(list_is_empty(shared), build_format_marker(format, "chunk-names"))
+    u0 : Unit <- write_shared_chunk_if(shared, keep, chunk, outdir, names, list_is_empty(shared))
+    build_entries_shared_go(String.lines(file), outdir, conds, "esm", shared, keep, chunk, names)
+def build_entries_manifest_done_chunk(+meta: String, parts: String & String, +chunk: String) -> IO(Unit):
+  (entries, outputs) = parts
+  write_text_atomic(String.drop(meta, 9n), "{\"version\":1,\"entries\":{" ++ entries ++ "},\"outputs\":{" ++ outputs ++ chunk ++ "}}")
+
+def build_entries_manifest_esm(+file: String, +outdir: String, +conds: String, +meta: String, +format: String) -> IO(Unit):
+  do IO<Unit>:
+    u0 : Unit <- build_entries_shared_esm(file, outdir, conds_join(conds), format)
+    parts : String & String <- manifest_collect_go(String.lines(file), outdir, conds_join(conds), "esm", "", "")
+    +chunk_name : String = shared_chunk_name(False{}, build_format_marker(format, "chunk-names"))
+    +chunk : String <- manifest_shared_chunk(outdir, chunk_name, sourcemap_mode(build_format_marker(format, "sourcemap")))
+    build_entries_manifest_done_chunk(meta, parts, chunk)
+
+def build_entries_manifest_kind(+file: String, +outdir: String, +conds: String, +meta: String, +format: String, esm: Bool) -> IO(Unit):
+  match esm:
+    case True{}:
+      build_entries_manifest_esm(file, outdir, conds, meta, format)
+    case False{}:
+      do IO<Unit>:
+        parts : String & String <- manifest_many_go(String.lines(file), outdir, conds_join(conds), format, "", "")
+        build_entries_manifest_done(meta, parts)
+
+def build_entries_kind(files: List<&2, String>, +file: String, +outdir: String, +conds: String, +format: String, html: Bool, esm: Bool) -> IO(Unit):
+  match html:
+    case True{}:
+      build_entries_plain_go(files, outdir, conds, format)
+    case False{}:
+      match esm:
+        case True{}:
+          build_entries_shared_esm(file, outdir, conds, format)
+        case False{}:
+          build_entries_plain_go(files, outdir, conds, format)
+
+def build_entries_go(+file: String, +outdir: String, +conds: String, +format: String) -> IO(Unit):
+  build_entries_kind(String.lines(file), file, outdir, conds, format, entries_have_html(String.lines(file)), String.eq(build_format_base(format), "esm"))
+def build_entries_many_meta_kind(+file: String, +outdir: String, +conds: String, +meta: String, +format: String, meta_empty: Bool, manifest: Bool) -> IO(Unit):
+  match meta_empty:
+    case True{}:
+      build_entries_go(file, outdir, conds_join(conds), format)
+    case False{}:
+      match manifest:
+        case True{}:
+          build_entries_manifest_kind(file, outdir, conds, meta, format, String.eq(build_format_base(format), "esm"))
+        case False{}:
+          IO.die(Unit, 2, "knot: multiple entries require --manifest metadata (unsupported_build)")
+
+def build_entries_many_meta(+file: String, +outdir: String, +conds: String, +meta: String, +format: String, meta_empty: Bool) -> IO(Unit):
+  build_entries_many_meta_kind(file, outdir, conds, meta, format, meta_empty, String.starts_with(meta, "manifest:"))
+
+
+def build_entries_many_paths(+file: String, +out: String, +outdir: String, +conds: String, +meta: String, +format: String, out_empty: Bool, dir_empty: Bool) -> IO(Unit):
+  match out_empty:
+    case False{}:
+      IO.die(Unit, 2, "knot: --outfile cannot be combined with multiple entries (unknown_command)")
+    case True{}:
+      match dir_empty:
+        case True{}:
+          IO.die(Unit, 2, "knot: multiple entries require --outdir (missing_output)")
+        case False{}:
+          build_entries_many_meta(file, outdir, conds, meta, format, String.is_empty(meta))
+
+def target_supported(+target: String) -> Bool:
+  Bool.or(String.is_empty(target), Bool.or(String.eq(target, "browser"), String.eq(target, "node")))
+
+def target_validate_kind(+target: String, valid: Bool) -> IO(Unit):
+  match valid:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      IO.die(Unit, 2, "knot: unsupported target " ++ target ++ " (unknown_command)")
+
+def target_validate(+format: String) -> IO(Unit):
+  +target : String = build_format_marker(format, "target")
+  target_validate_kind(target, target_supported(target))
+
+def sourcemap_supported(+mode: String) -> Bool:
+  Bool.or(String.eq(mode, "none"), Bool.or(String.eq(mode, "linked"), Bool.or(String.eq(mode, "external"), String.eq(mode, "inline"))))
+
+def sourcemap_validate_kind(+mode: String, valid: Bool) -> IO(Unit):
+  match valid:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      IO.die(Unit, 2, "knot: unsupported source map mode " ++ mode ++ " (unknown_command)")
+
+def sourcemap_validate(+format: String) -> IO(Unit):
+  +mode : String = sourcemap_mode(build_format_marker(format, "sourcemap"))
+  sourcemap_validate_kind(mode, sourcemap_supported(mode))
+
+def build_meta_validate_kind(multiple: Bool, empty: Bool, manifest: Bool) -> IO(Unit):
+  match multiple:
+    case False{}:
+      IO.pure(Unit, Unit{})
+    case True{}:
+      match empty:
+        case True{}:
+          IO.pure(Unit, Unit{})
+        case False{}:
+          match manifest:
+            case True{}:
+              IO.pure(Unit, Unit{})
+            case False{}:
+              IO.die(Unit, 2, "knot: multiple entries require --manifest metadata (unsupported_build)")
+
+def build_meta_validate(+meta: String, multiple: Bool) -> IO(Unit):
+  build_meta_validate_kind(multiple, String.is_empty(meta), String.starts_with(meta, "manifest:"))
+
+def build_meta_css_kind(+path: String, present: Bool) -> IO(String):
+  match present:
+    case True{}:
+      read_text(path)
+    case False{}:
+      IO.pure(String, "")
+
+def build_meta_after_single(+file: String, +out: String, +outdir: String, +conds: String, +meta: String, +format: String, html: Bool) -> IO(Unit):
+  match html:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      do IO<Unit>:
+        +picked : String <- bundle_output_pick_kind(file, out, outdir, String.is_empty(out), String.is_empty(outdir), False{})
+        +output : String <- build_entry_output(file, picked, outdir, format, False{})
+        raw : String <- read_text(file)
+        +src : String <- normalize_source(raw)
+        js : String <- read_text(output)
+        +css_file : String = css_path(output)
+        css_present : Bool <- file_exists(css_file)
+        css : String <- build_meta_css_kind(css_file, css_present)
+        files : List<&2, String> <- bundle_files_conds(file, conds_join(conds))
+        meta_write(meta, file, output, src, js, css, files, build_format_marker(format, "asset"), sourcemap_mode(build_format_marker(format, "sourcemap")))
+
+def build_meta_after_many_kind(+file: String, +outdir: String, +conds: String, +meta: String, +format: String, esm: Bool) -> IO(Unit):
+  match esm:
+    case True{}:
+      do IO<Unit>:
+        parts : String & String <- manifest_collect_go(String.lines(file), outdir, conds_join(conds), format, "", "")
+        +chunk_name : String = shared_chunk_name(False{}, build_format_marker(format, "chunk-names"))
+        +chunk : String <- manifest_shared_chunk(outdir, chunk_name, sourcemap_mode(build_format_marker(format, "sourcemap")))
+        build_entries_manifest_done_chunk(meta, parts, chunk)
+    case False{}:
+      build_entries_manifest(file, outdir, conds, meta, format)
+
+def build_meta_after_kind(+file: String, +out: String, +outdir: String, +conds: String, +meta: String, +format: String, multiple: Bool) -> IO(Unit):
+  match multiple:
+    case True{}:
+      build_meta_after_many_kind(file, outdir, conds, meta, format, String.eq(build_format_base(format), "esm"))
+    case False{}:
+      build_meta_after_single(file, out, outdir, conds, meta, format, String.ends_with(file, ".html"))
+
+def build_meta_after_kind_empty(empty: Bool, +file: String, +out: String, +outdir: String, +conds: String, +meta: String, +format: String) -> IO(Unit):
+  match empty:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      build_meta_after_kind(file, out, outdir, conds, meta, format, String.contains(file, "\n"))
+
+def build_meta_after(+file: String, +out: String, +outdir: String, +conds: String, +meta: String, +format: String) -> IO(Unit):
+  build_meta_after_kind_empty(String.is_empty(meta), file, out, outdir, conds, meta, format)
+
+def build_output_dispatch(+file: String, +out: String, +outdir: String, +conds: String, +meta: String, +format: String, multiple: Bool) -> IO(Unit):
+  match multiple:
+    case True{}:
+      build_entries_many_paths(file, out, outdir, conds, meta, format, String.is_empty(out), String.is_empty(outdir))
+    case False{}:
+      do IO<Unit>:
+        +picked : String <- bundle_output_pick_kind(file, out, outdir, String.is_empty(out), String.is_empty(outdir), String.ends_with(file, ".html"))
+        +output : String <- build_entry_output(file, picked, outdir, format, String.ends_with(file, ".html"))
+        bundle_write_checked(file, output, conds_join(conds), meta, format, String.ends_with(file, ".html"))
+
+def build_output_discard_target(+file: String, +out: String, stamp: Nat, out_empty: Bool) -> String:
+  match out_empty:
+    case True{}:
+      file ++ ".knot-check-" ++ Nat.show(stamp)
+    case False{}:
+      out ++ ".knot-check-" ++ Nat.show(stamp)
+
+def build_output_discard(+file: String, +out: String, +outdir: String, +conds: String, +format: String, multiple: Bool, dir_empty: Bool) -> IO(Unit):
+  match dir_empty:
+    case False{}:
+      do IO<Unit>:
+        stamp : Nat <- IO.now
+        +stage : String = outdir ++ ".knot-check-" ++ Nat.show(stamp)
+        u0 : Unit <- build_output_dispatch(file, out, stage, conds, "", format, multiple)
+        IO.try(Unit, Fs.remove_dir(stage))
+    case True{}:
+      do IO<Unit>:
+        stamp : Nat <- IO.now
+        +target : String = build_output_discard_target(file, out, stamp, String.is_empty(out))
+        u0 : Unit <- build_output_dispatch(file, target, "", conds, "", format, multiple)
+        IO.try(Unit, Fs.unlink(target))
+
+
+def build_output_atomic_kind(+file: String, +out: String, +outdir: String, +conds: String, +meta: String, +format: String, multiple: Bool, stage: Bool) -> IO(Unit):
+  match stage:
+    case True{}:
+      do IO<Unit>:
+        +stamp : Nat <- IO.now
+        +staged : String = outdir ++ ".knot-stage-" ++ Nat.show(stamp)
+        u0 : Unit <- build_output_dispatch(file, out, staged, conds, "", format, multiple)
+        u1 : Unit <- IO.try(Unit, Fs.replace_dir(staged, outdir))
+        build_meta_after(file, out, outdir, conds, meta, format)
+    case False{}:
+      build_output_dispatch(file, out, outdir, conds, meta, format, multiple)
+
+def build_output_atomic_write_kind(+file: String, +out: String, +outdir: String, +conds: String, +meta: String, +format: String, multiple: Bool, write: Bool) -> IO(Unit):
+  match write:
+    case False{}:
+      do IO<Unit>:
+        u0 : Unit <- sourcemap_validate(format)
+        u1 : Unit <- target_validate(format)
+        u2 : Unit <- build_meta_validate(meta, String.contains(file, "\n"))
+        u3 : Unit <- build_options_validate(format)
+        u4 : Unit <- splitting_output_validate(format, outdir)
+        build_output_discard(file, out, outdir, conds, format, multiple, String.is_empty(outdir))
+    case True{}:
+      do IO<Unit>:
+        u0 : Unit <- sourcemap_validate(format)
+        u1 : Unit <- target_validate(format)
+        u2 : Unit <- build_meta_validate(meta, String.contains(file, "\n"))
+        u3 : Unit <- build_options_validate(format)
+        u4 : Unit <- splitting_output_validate(format, outdir)
+        build_output_atomic_kind(file, out, outdir, conds, meta, format, multiple, Bool.not(String.is_empty(outdir)))
+
+def build_output_atomic(+file: String, +out: String, +outdir: String, +conds: String, +meta: String, +format: String, multiple: Bool) -> IO(Unit):
+  build_output_atomic_write_kind(file, out, outdir, conds, meta, format, multiple, Bool.not(String.eq(build_format_marker(format, "write"), "false")))
+def build_optional_format_flag(+which: String) -> Bool:
+  Bool.or(
+    String.eq(which, "splitting"),
+    Bool.or(
+      String.eq(which, "minify-syntax"),
+      Bool.or(
+        String.eq(which, "minify-whitespace"),
+        Bool.or(
+          String.eq(which, "minify-identifiers"),
+          Bool.or(
+            String.eq(which, "keep-names"),
+            Bool.or(
+              String.eq(which, "clear-on-error"),
+              Bool.or(String.eq(which, "ignore-side-effects-annotations"), Bool.or(String.eq(which, "cpu"), String.eq(which, "gpu")))))))))
+
+def build_value_state_kind(missing: Bool) -> Nat:
+  match missing:
+    case True{}:
+      16n
+    case False{}:
+      11n
+
+def build_value_state(+which: String, +value: String) -> Nat:
+  build_value_state_kind(Bool.and(build_optional_format_flag(which), String.starts_with(value, "--")))
+def build_value_rest_kind(missing: Bool, +value: String, tail: List<&2, String>) -> List<&2, String>:
+  match missing:
+    case True{}:
+      Con{value, tail}
+    case False{}:
+      tail
+
+def build_value_rest(+which: String, +value: String, tail: List<&2, String>) -> List<&2, String>:
+  build_value_rest_kind(Bool.and(build_optional_format_flag(which), String.starts_with(value, "--")), value, tail)
+def build_end_value_state_kind(optional: Bool) -> Nat:
+  match optional:
+    case True{}:
+      16n
+    case False{}:
+      17n
+
+def build_end_value_state(+which: String) -> Nat:
+  build_end_value_state_kind(build_optional_format_flag(which))
+
+@unsafe def run_build_k(sel: Nat, args: List<&2, String>, +file: String, +out: String, +conds: String, +meta: String, +outdir: String, +format: String, +head: String, rest: List<&2, String>, +which: String, +val: String, b0: Bool, b1: Bool, b2: Bool, b3: Bool, b4: Bool) -> IO(Unit):
+  match sel:
+    case 0n:
+      match args:
+        case Nil{}:
+          run_build_k(20n, Nil{}, file, out, conds, meta, outdir, format, "", Nil{}, "", "", String.is_empty(file), String.is_empty(out), False{}, False{}, False{})
         case Con{+h, r}:
-          run_build_k(1n, Nil{}, file, out, conds, meta, h, r, "", "", String.eq(h, "--outfile"), String.eq(h, "--conditions"), String.eq(h, "--metafile"))
+          run_build_k(1n, Nil{}, file, out, conds, meta, outdir, format, h, r, "", "", String.eq(h, "--outfile"), String.eq(h, "--conditions"), build_value_flag(h), build_format_option(h), Bool.or(String.eq(h, "--outdir"), String.eq(h, "--public-path")))
     case 1n:
       match b0:
         case True{}:
-          run_build_k(10n, Nil{}, file, out, conds, meta, head, rest, "outfile", "", False{}, False{}, False{})
+          run_build_k(10n, Nil{}, file, out, conds, meta, outdir, format, head, rest, "outfile", "", False{}, False{}, False{}, False{}, False{})
         case False{}:
-          run_build_k(2n, Nil{}, file, out, conds, meta, head, rest, "", "", b1, b2, False{})
+          run_build_k(2n, Nil{}, file, out, conds, meta, outdir, format, head, rest, "", "", b1, b2, b3, b4, False{})
     case 2n:
       match b0:
         case True{}:
-          run_build_k(10n, Nil{}, file, out, conds, meta, head, rest, "conditions", "", False{}, False{}, False{})
+          run_build_k(10n, Nil{}, file, out, conds, meta, outdir, format, head, rest, "conditions", "", False{}, False{}, False{}, False{}, False{})
         case False{}:
-          run_build_k(3n, Nil{}, file, out, conds, meta, head, rest, "", "", b1, False{}, False{})
+          run_build_k(3n, Nil{}, file, out, conds, meta, outdir, format, head, rest, "", "", b1, b2, b3, b4, False{})
     case 3n:
       match b0:
         case True{}:
-          run_build_k(10n, Nil{}, file, out, conds, meta, head, rest, "metafile", "", False{}, False{}, False{})
+          run_build_k(10n, Nil{}, file, out, conds, meta, outdir, format, head, rest, build_meta_flag(head), "", False{}, False{}, False{}, False{}, False{})
         case False{}:
-          run_build_k(21n, Nil{}, file, out, conds, meta, head, rest, "", "", String.is_empty(file), False{}, False{})
+          run_build_k(4n, Nil{}, file, out, conds, meta, outdir, format, head, rest, "", "", b1, b2, b3, b4, False{})
+    case 4n:
+      match b0:
+        case True{}:
+          run_build_k(10n, Nil{}, file, out, conds, meta, outdir, format, head, rest, build_format_value_flag(head), "", False{}, False{}, False{}, False{}, False{})
+        case False{}:
+          run_build_k(5n, Nil{}, file, out, conds, meta, outdir, format, head, rest, "", "", b1, b2, b3, b4, False{})
+    case 5n:
+      match b0:
+        case True{}:
+          run_build_k(10n, Nil{}, file, out, conds, meta, outdir, format, head, rest, build_path_value_flag(head), "", False{}, False{}, False{}, False{}, False{})
+        case False{}:
+          run_build_k(21n, Nil{}, file, out, conds, meta, outdir, format, head, rest, "", "", String.is_empty(file), False{}, False{}, False{}, False{})
     case 10n:
       match rest:
         case Con{+v, tail}:
-          run_build_k(11n, Nil{}, file, out, conds, meta, head, tail, which, v, String.eq(which, "outfile"), String.eq(which, "conditions"), String.eq(which, "metafile"))
+          run_build_k(build_value_state(which, v), Nil{}, file, out, conds, meta, outdir, format, head, build_value_rest(which, v, tail), which, v, String.eq(which, "outfile"), String.eq(which, "conditions"), is_meta_flag(which), build_format_key_option(which), Bool.or(String.eq(which, "outdir"), String.eq(which, "public")))
         case Nil{}:
-          IO.die(Unit, 2, "knot: build flag " ++ which ++ " requires a value (unknown_command)")
+          run_build_k(build_end_value_state(which), Nil{}, file, out, conds, meta, outdir, format, head, Nil{}, which, "", False{}, False{}, False{}, False{}, False{})
     case 11n:
       match b0:
         case True{}:
-          run_build_k(0n, rest, file, val, conds, meta, "", Nil{}, "", "", False{}, False{}, False{})
+          run_build_k(0n, rest, file, val, conds, meta, outdir, format, "", Nil{}, "", "", False{}, False{}, False{}, False{}, False{})
         case False{}:
-          run_build_k(12n, Nil{}, file, out, conds, meta, head, rest, which, val, b1, b2, False{})
+          run_build_k(12n, Nil{}, file, out, conds, meta, outdir, format, head, rest, which, val, b1, b2, b3, b4, False{})
     case 12n:
       match b0:
         case True{}:
-          run_build_k(0n, rest, file, out, conds_add(val, conds, String.is_empty(conds)), meta, "", Nil{}, "", "", False{}, False{}, False{})
+          run_build_k(0n, rest, file, out, conds_add(val, conds, String.is_empty(conds)), meta, outdir, format, "", Nil{}, "", "", False{}, False{}, False{}, False{}, False{})
         case False{}:
-          run_build_k(0n, rest, file, out, conds, val, "", Nil{}, "", "", False{}, False{}, False{})
+          run_build_k(13n, Nil{}, file, out, conds, meta, outdir, format, head, rest, which, val, b1, b2, b3, b4, False{})
+    case 13n:
+      match b0:
+        case True{}:
+          run_build_k(0n, rest, file, out, conds, build_meta_value(meta, which, val), outdir, build_option_format(format, which, val), "", Nil{}, "", "", False{}, False{}, False{}, False{}, False{})
+        case False{}:
+          run_build_k(14n, Nil{}, file, out, conds, meta, outdir, format, head, rest, which, val, b1, b2, b3, b4, False{})
+    case 14n:
+      match b0:
+        case True{}:
+          run_build_k(0n, rest, file, out, conds, meta, outdir, build_format_apply_flag(format, val, which), "", Nil{}, "", "", False{}, False{}, False{}, False{}, False{})
+        case False{}:
+          run_build_k(15n, Nil{}, file, out, conds, meta, outdir, format, head, rest, which, val, b1, b2, b3, b4, False{})
+    case 15n:
+      match b0:
+        case True{}:
+          run_build_k(0n, rest, file, out, conds, meta, build_path_apply_outdir(outdir, val, String.eq(which, "outdir")), build_path_apply_format(format, val, String.eq(which, "outdir")), "", Nil{}, "", "", False{}, False{}, False{}, False{}, False{})
+        case False{}:
+          IO.die(Unit, 2, "knot: unknown build flag " ++ which ++ " (unknown_command)")
+    case 17n:
+      IO.die(Unit, 2, "knot: build flag " ++ which ++ " requires a value (unknown_command)")
+    case 16n:
+      run_build_k(0n, rest, file, out, conds, meta, outdir, build_format_apply_flag(format, "true", which), "", Nil{}, "", "", False{}, False{}, False{}, False{}, False{})
     case 20n:
       match b0:
         case True{}:
           IO.die(Unit, 2, "knot: build requires a file (missing_input)")
         case False{}:
-          run_build_k(22n, Nil{}, file, out, conds, meta, "", Nil{}, "", "", b1, False{}, False{})
+          run_build_k(22n, Nil{}, file, out, conds, meta, outdir, format, "", Nil{}, "", "", b1, False{}, False{}, False{}, False{})
     case 21n:
+      run_build_k(23n, Nil{}, file, out, conds, meta, outdir, format, head, rest, "", "", String.starts_with(head, "-"), String.eq(head, "--minify"), String.is_empty(file), False{}, False{})
+    case 23n:
       match b0:
         case True{}:
-          run_build_k(0n, rest, head, out, conds, meta, "", Nil{}, "", "", False{}, False{}, False{})
+          match b1:
+            case True{}:
+              run_build_k(0n, rest, file, out, conds, meta, outdir, format ++ ";minify=true", "", Nil{}, "", "", False{}, False{}, False{}, False{}, False{})
+            case False{}:
+              IO.die(Unit, 2, "knot: unknown build flag " ++ head ++ " (unknown_command)")
         case False{}:
-          IO.die(Unit, 2, "knot: unknown build flag " ++ head ++ " (unknown_command)")
+          match b2:
+            case True{}:
+              run_build_k(0n, rest, head, out, conds, meta, outdir, format, "", Nil{}, "", "", False{}, False{}, False{}, False{}, False{})
+            case False{}:
+              run_build_k(0n, rest, file ++ "\n" ++ head, out, conds, meta, outdir, format, "", Nil{}, "", "", False{}, False{}, False{}, False{}, False{})
     case 22n:
-      match b0:
-        case True{}:
-          bundle_write_opts(file, Compiler.js_path(file), conds_join(conds), meta)
-        case False{}:
-          bundle_write_opts(file, out, conds_join(conds), meta)
+      build_output_atomic(file, out, outdir, conds, meta, format, String.contains(file, "\n"))
     case _:
       IO.die(Unit, 2, "knot: build parse error (unknown_command)")
 
 
 def run_build_out(+file: String, rest: List<&2, String>) -> IO(Unit):
-  run_build_k(0n, Con{file, rest}, "", "", "", "", "", Nil{}, "", "", False{}, False{}, False{})
+  run_build_k(0n, Con{file, build_expand_args(rest)}, "", "", "", "", "", "esm", "", Nil{}, "", "", False{}, False{}, False{}, False{}, False{})
 
 def run_build_nb(no_bundle: Bool, +head: String, rest: List<&2, String>) -> IO(Unit):
   match no_bundle:
@@ -3935,12 +7412,22 @@ def run_build_w(+head: String, rest: List<&2, String>, watch: Bool) -> IO(Unit):
     case False{}:
       run_build_nb(String.eq(head, "--no-bundle"), head, rest)
 
+def build_show_config() -> IO(Unit):
+  IO.print("{\"target\":\"browser\",\"format\":\"esm\",\"splitting\":false,\"minify\":false,\"write\":true,\"conditions\":[\"import\",\"module\",\"node\",\"default\"]}")
+
+def run_build_show(+head: String, rest: List<&2, String>, show: Bool) -> IO(Unit):
+  match show:
+    case True{}:
+      build_show_config()
+    case False{}:
+      run_build_w(head, rest, String.eq(head, "--watch"))
+
 def run_build(args: List<&2, String>) -> IO(Unit):
   match args:
     case Nil{}:
       IO.die(Unit, 2, "knot: build requires a file (missing_input)")
     case Con{+head, rest}:
-      run_build_w(head, rest, String.eq(head, "--watch"))
+      run_build_show(head, rest, String.eq(head, "--show-config"))
 
 
 
@@ -3960,6 +7447,102 @@ def run_clean(args: List<&2, String>) -> IO(Unit):
     case Nil{}:
       IO.die(Unit, 2, "knot: unknown command clean (unknown_command)")
 
+def run_args_join(+parts: List<&2, String>, +acc: String, empty: Bool) -> String:
+  match parts:
+    case Nil{}:
+      acc
+    case Con{+h, rest}:
+      match empty:
+        case True{}:
+          run_args_join(rest, h, False{})
+        case False{}:
+          run_args_join(rest, acc ++ "\n" ++ h, False{})
+
+def run_script_result_code_ok(+status: String, +code: U32, ok: Bool) -> IO(Unit):
+  match ok:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      IO.die(Unit, code, "knot run: script exited with status " ++ status ++ " (script_failed)")
+
+def run_script_result_code(+status: String, code: Maybe<&2, U32>) -> IO(Unit):
+  match code:
+    case None{}:
+      IO.die(Unit, 1, "knot run: invalid script exit status (script_failed)")
+    case Some{+code}:
+      run_script_result_code_ok(status, code, U32.is_eq(code, 0))
+
+def run_script_result(+status: String) -> IO(Unit):
+  run_script_result_code(status, U32.read(status))
+
+def run_script_exec(+dest: String, parts: List<&2, String>) -> IO(Unit):
+  match parts:
+    case Con{+cmd, rest}:
+      do IO<Unit>:
+        +args : String = run_args_join(rest, "", True{})
+        status : String <- IO.try(String, Os.exec_many(cmd, args, dest))
+        run_script_result(status)
+    case Nil{}:
+      IO.die(Unit, 1, "knot run: empty script (missing_script)")
+
+def run_script_got(+name: String, +pkg: String, +script: String, empty: Bool) -> IO(Unit):
+  match empty:
+    case True{}:
+      IO.die(Unit, 1, "knot run: script \"" ++ name ++ "\" is not defined (missing_script)")
+    case False{}:
+      do IO<Unit>:
+        +engine : String <- json_optional_string(pkg, "engines/node")
+        u0 : Unit <- check_engine(engine)
+        run_script_exec(".", String.split(script, ' '))
+
+def run_script(+name: String, +pkg: String) -> IO(Unit):
+  do IO<Unit>:
+    +script : String <- json_optional_string(pkg, "scripts/" ++ name)
+    run_script_got(name, pkg, script, String.is_empty(script))
+
+def run_run_args(args: List<&2, String>) -> IO(Unit):
+  match args:
+    case Nil{}:
+      IO.die(Unit, 2, "knot run requires a script name (missing_input)")
+    case Con{+name, _}:
+      do IO<Unit>:
+        pkg : String <- read_text("package.json")
+        run_script(name, pkg)
+
+def run_run(args: List<&2, String>) -> IO(Unit):
+  run_run_args(args)
+
+
+def upgrade_result_code_ok(+status: String, code: U32, ok: Bool) -> IO(Unit):
+  match ok:
+    case True{}:
+      IO.print("knot: upgraded @matheusbbarni/knot")
+    case False{}:
+      IO.die(Unit, code, "knot --upgrade: npm exited with status " ++ status ++ " (upgrade_failed)")
+
+def upgrade_result_code(+status: String, code: Maybe<&2, U32>) -> IO(Unit):
+  match code:
+    case None{}:
+      IO.die(Unit, 1, "knot --upgrade: invalid npm exit status (upgrade_failed)")
+    case Some{+code}:
+      upgrade_result_code_ok(status, code, U32.is_eq(code, 0))
+
+def upgrade_result(+status: String) -> IO(Unit):
+  upgrade_result_code(status, U32.read(status))
+
+def run_upgrade() -> IO(Unit):
+  do IO<Unit>:
+    +status : String <- IO.try(String, Os.exec_many("npm", "install\n--global\n@matheusbbarni/knot@latest", "."))
+    upgrade_result(status)
+
+def run_upgrade_args(args: List<&2, String>) -> IO(Unit):
+  match args:
+    case Nil{}:
+      run_upgrade()
+    case Con{+head, _}:
+      IO.die(Unit, 2, "knot --upgrade does not accept argument " ++ head ++ " (unknown_command)")
+
+
 def dispatch_build(+cmd: String, rest: List<&2, String>, is_build: Bool) -> IO(Unit):
   match is_build:
     case True{}:
@@ -3967,16 +7550,23 @@ def dispatch_build(+cmd: String, rest: List<&2, String>, is_build: Bool) -> IO(U
     case False{}:
       dispatch_scan(cmd, rest, String.eq(cmd, "scan"))
 
+def dispatch_run(+cmd: String, rest: List<&2, String>, is_run: Bool) -> IO(Unit):
+  match is_run:
+    case True{}:
+      run_run(rest)
+    case False{}:
+      dispatch_build(cmd, rest, String.eq(cmd, "build"))
+
 def dispatch_clean(+cmd: String, rest: List<&2, String>, is_clean: Bool) -> IO(Unit):
   match is_clean:
     case True{}:
       run_clean(rest)
     case False{}:
-      dispatch_build(cmd, rest, String.eq(cmd, "build"))
+      dispatch_run(cmd, rest, String.eq(cmd, "run"))
 
 
 def run_help() -> IO(Unit):
-  IO.print("Usage: knot <command>\n\nCommands:\n  install      Install dependencies from package.json\n  add          Add a dependency and install\n  remove       Remove a dependency\n  update       Re-resolve dependency ranges\n  list         Print direct dependencies\n  why          Show why a package is installed\n  fetch        Fill the store from the lockfile\n  store        Inspect the content-addressed store\n  cache clean  Remove the registry metadata cache\n  transpile    Transform TypeScript or JavaScript without bundling\n  scan         Print runtime imports and exports as JSON\n  analyze      Walk import graph from entrypoints as JSON\n  build        Compile entry points; --no-bundle skips graph linking\n  clean        Remove compiler caches with --build-cache")
+  IO.print("Usage: knot <command>\n\nCommands:\n  install      Install dependencies from package.json\n  add          Add a dependency and install\n  remove       Remove a direct dependency\n  update       Re-resolve dependency ranges\n  --upgrade    Upgrade installed Knot through npm\n  run          Execute a package.json script with its Node engine\n  list         Print direct dependencies\n  why          Show why a package is installed\n  fetch        Fill the store from the lockfile\n  store        Inspect the content-addressed store\n  cache clean  Remove the registry metadata cache\n  transpile    Transform TypeScript or JavaScript without bundling\n  scan         Print runtime imports and exports as JSON\n  analyze      Walk import graph from entrypoints as JSON\n  build        Compile entry points; --no-bundle skips graph linking\n  clean        Remove compiler caches with --build-cache")
 
 def dispatch_version(+cmd: String, rest: List<&2, String>, is_version: Bool) -> IO(Unit):
   match is_version:
@@ -3985,13 +7575,19 @@ def dispatch_version(+cmd: String, rest: List<&2, String>, is_version: Bool) -> 
     case False{}:
       dispatch_clean(cmd, rest, String.eq(cmd, "clean"))
 
+def dispatch_upgrade(+cmd: String, rest: List<&2, String>, is_upgrade: Bool) -> IO(Unit):
+  match is_upgrade:
+    case True{}:
+      run_upgrade_args(rest)
+    case False{}:
+      dispatch_version(cmd, rest, String.eq(cmd, "--version"))
 
 def dispatch_help(+cmd: String, rest: List<&2, String>, is_help: Bool) -> IO(Unit):
   match is_help:
     case True{}:
       run_help()
     case False{}:
-      dispatch_version(cmd, rest, String.eq(cmd, "--version"))
+      dispatch_upgrade(cmd, rest, String.eq(cmd, "--upgrade"))
 
 
 

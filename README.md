@@ -68,6 +68,7 @@ The test runner remains planned.
 | Command | Status | Purpose |
 | --- | --- | --- |
 | `knot install` | Available | Resolve, fetch, verify, and materialize project dependencies |
+| `knot --upgrade` | Available | Upgrade the installed Knot package through npm |
 | `knot add <spec>` | Available | Add and install a direct dependency |
 | `knot remove <name>` | Available | Remove a direct dependency |
 | `knot fetch` | Available | Populate the package store without creating project links |
@@ -80,6 +81,7 @@ The test runner remains planned.
 | `knot test [filters...]` | Planned | Discover, compile, isolate, and execute tests |
 
 `knot run <script>` reads the named entry from `package.json` scripts, validates `engines.node` against the current Node.js runtime, and executes the command without a shell.
+`knot --upgrade` runs `npm install --global @matheusbbarni/knot@latest` without a shell, so it changes the installed Knot package rather than project dependencies.
 
 Older PRDs use the working name `bnpm`.
 The public names are `knot`, `knot.toml`, `knot.lock`, `node_modules/.knot`, and `knot:test`.

@@ -4,13 +4,13 @@ Status: Draft
 
 Date: 2026-09-17
 
-Working CLI name: `bnpm`
+CLI name: `knot`
 
 Depends on: `package-manager-prd.md` and `ts-compiling-prd.md`
 
 ## 1. Summary
 
-`bnpm` will provide a native production bundler implemented in Bend2.
+`knot` will provide a native production bundler implemented in Bend2.
 The bundler will consume the parser, module resolver, transformer, printer, and source-map facilities defined in `ts-compiling-prd.md`.
 It will turn JavaScript, TypeScript, JSX, TSX, CSS, HTML, data files, and static assets into a deterministic set of deployable artifacts for browsers and Node.js.
 
@@ -106,7 +106,7 @@ A manifest must never point to an artifact that was not committed.
 6. Never make code eager merely to reduce chunk count.
 7. Produce deterministic artifacts from identical inputs and configuration.
 8. Commit one complete output generation atomically.
-9. Share the package resolver and lockfile with `bnpm` instead of creating a second package universe.
+9. Share the package resolver and lockfile with `knot` instead of creating a second package universe.
 10. Keep JavaScript, CSS, HTML, and asset graphs distinct but connected.
 11. Expose every output relationship through a machine-readable manifest.
 12. Use multicore module and chunk parallelism before considering GPU work.
@@ -130,7 +130,8 @@ A manifest must never point to an artifact that was not committed.
 - Provide an option that ignores third-party side-effect annotations without disabling compiler-proven dead-code elimination.
 - Support multiple entry points.
 - Support shared chunks and dynamic-import chunks for ESM output.
-- Keep dynamic imports lazy unless configuration explicitly disables splitting.
+- Keep dynamic imports lazy whenever splitting is enabled.
+- Reject dynamic imports with a stable diagnostic when splitting is disabled until a semantics-preserving lazy-wrapper implementation exists.
 - Bundle JSON, JSONC, TOML, YAML, and text imports through built-in loaders.
 - Copy unrecognized static assets and replace imports with generated URLs.
 - Bundle CSS entry points and CSS imported from JavaScript or HTML.
@@ -219,7 +220,8 @@ The output must preserve Node.js module behavior and must not inject browser shi
 
 ### Library author
 
-The author wants ESM and CommonJS distributions with package dependencies externalized, stable output paths, preserved public exports, and separate declaration generation.
+The author wants ESM and CommonJS distributions with package dependencies externalized, stable output paths, preserved public exports, and a separate declaration-generation command.
+Declaration generation is not owned by the bundler.
 
 ### Monorepo maintainer
 
@@ -317,7 +319,7 @@ It can omit dynamic-import chunks whose importing code is itself removed.
 It can fold small side-effect-free chunks into chunks loaded by a superset of importers without making lazy effects eager.
 It can emit module-preload links for browser HTML entry points.
 
-The first `bnpm` implementation should prefer predictable chunks over a minimum theoretical chunk count.
+The first `knot` implementation should prefer predictable chunks over a minimum theoretical chunk count.
 Small-chunk merging may be added only after the base splitting semantics are proven.
 
 Sources:
@@ -347,7 +349,7 @@ An imported stylesheet participates at the location and under the conditions spe
 Ordering, cascade layers, media queries, supports conditions, charset rules, and duplicate imports require CSS-specific handling.
 
 CSS Modules produce both CSS and a JavaScript-visible export map.
-Composition across files creates graph edges, and composition with conflicting declarations has undefined ordering in the common CSS Modules model.
+Composition across files creates graph edges, and conflicting declarations require an explicit canonical ordering policy.
 
 Sources:
 
@@ -373,7 +375,7 @@ Node.js package `exports`, `imports`, `type`, conditional exports, and module fo
 The browser field may replace package entry points or selected files for browser builds.
 The `sideEffects` field affects whether unused imports may be removed.
 
-The bundler must use the shared `bnpm` resolver and the frozen lockfile.
+The bundler must use the shared `knot` resolver and the frozen lockfile.
 A bundler-local package resolver would create correctness differences between installed and bundled programs.
 
 Sources:
@@ -406,14 +408,14 @@ The first implementation should use multicore CPU execution and measure any GPU 
 
 | Command | Behavior |
 | --- | --- |
-| `bnpm build <entrypoints...>` | Build JavaScript, CSS, or HTML entry points and write deployable artifacts |
-| `bnpm build --watch <entrypoints...>` | Keep the build context alive and publish affected artifacts after changes |
-| `bnpm analyze <entrypoints...>` | Build graph and chunk plans, then report composition and size metadata |
-| `bnpm build --write=false <entrypoints...>` | Produce artifacts in memory or temporary storage without activating an output directory |
-| `bnpm clean --build-cache` | Remove bundler caches without touching the package store |
-| `bnpm build --show-config` | Print normalized build configuration and exit |
+| `knot build <entrypoints...>` | Build JavaScript, CSS, or HTML entry points and write deployable artifacts |
+| `knot build --watch <entrypoints...>` | Keep the build context alive and publish affected artifacts after changes |
+| `knot analyze <entrypoints...>` | Build graph and chunk plans, then report composition and size metadata |
+| `knot build --write=false <entrypoints...>` | Produce artifacts in memory or temporary storage without activating an output directory |
+| `knot clean --build-cache` | Remove bundler caches without touching the package store |
+| `knot build --show-config` | Print normalized build configuration and exit |
 
-`bnpm build` must not install a missing package.
+`knot build` must not install a missing package.
 It must report the unresolved specifier, importer, attempted conditions, and the command needed to restore the package graph.
 
 ### 9.2 Required options
@@ -423,6 +425,7 @@ It must report the unresolved specifier, importer, attempted conditions, and the
 - `--outdir <path>`
 - `--outfile <path>`
 - `--root <path>`
+- `--profile <name>`
 - `--splitting`
 - `--min-chunk-size <bytes>`
 - `--external <pattern>`
@@ -434,6 +437,7 @@ It must report the unresolved specifier, importer, attempted conditions, and the
 - `--asset-naming <template>`
 - `--css-naming <template>`
 - `--public-path <path-or-url>`
+- `--preload none|static`
 - `--define <name=value>`
 - `--drop debugger|console|<qualified-name>`
 - `--ignore-side-effects-annotations`
@@ -443,8 +447,8 @@ It must report the unresolved specifier, importer, attempted conditions, and the
 - `--minify-identifiers`
 - `--sourcemap none|linked|external|inline`
 - `--sources-content include|exclude`
-- `--metafile <path>`
-- `--manifest <path>`
+- `--metafile <path-or->`
+- `--manifest <path-or->`
 - `--watch`
 - `--clear-on-error`
 - `--write true|false`
@@ -452,6 +456,8 @@ It must report the unresolved specifier, importer, attempted conditions, and the
 - `--gpu`
 - `--log-level silent|error|warning|info|debug`
 - `--diagnostics text|json`
+- `--help`
+- `--version`
 
 `--outfile` must be rejected when the build can emit more than one artifact.
 Splitting must require ESM output and `--outdir` in the initial release.
@@ -467,11 +473,95 @@ CommonJS output must reject top-level await when no semantics-preserving transfo
 - Splitting is disabled.
 - Minification is disabled.
 - Source maps default to `none`.
+- `sourcesContent` defaults to `exclude`.
+- The public path defaults to the empty string.
+- Preload generation defaults to `none`.
+- The default configuration profile is `default`.
+- The default log level is `info`.
+- The default diagnostic format is `text`.
+- `--clear-on-error` defaults to disabled.
+- Third-party side-effect annotations are honored by default.
 - Writes are enabled.
 - Network access is disabled.
 - CPU execution is enabled on every platform.
 
 Changing a default is a compatibility event and requires a decision-record update.
+
+### 9.4 CLI behavior
+
+`knot` commands are non-interactive by default.
+They must not prompt, install packages, or access the network implicitly.
+
+`-h` and `--help` print concise command help and exit successfully.
+`--version` prints the Knot version and exits successfully.
+Successful commands exit with status 0.
+An invalid invocation or normalized configuration exits with status 2.
+A valid build request that fails during resolution, compilation, analysis, or publication exits with status 1.
+An interrupted command exits with status 130 and must not activate a new generation.
+
+Human diagnostics and progress are written to stderr.
+Artifact data from `knot analyze` is written to stdout.
+`--diagnostics json` emits versioned diagnostic records in canonical order on stderr.
+No command writes progress to stdout.
+
+### 9.4.1 CLI value and repetition rules
+
+Options may appear before or after entry points.
+Entry-point order is preserved after option parsing.
+
+Scalar options may appear once.
+Repeating a scalar option with a different value is an `duplicate_option` configuration error.
+List options such as `--external` and `--conditions` append values in command-line order before canonical serialization.
+Repeated `--loader` values must target different extensions.
+Conflicting mappings for one extension are an `duplicate_option` configuration error.
+
+Boolean options use a bare flag.
+`--write` is the only boolean option that requires an explicit `true` or `false` value.
+`--cpu` and `--gpu` are mutually exclusive.
+
+Relative input, output, manifest, metafile, and configuration paths resolve from the invocation working directory.
+The normalized request stores canonical paths and rejects traversal outside the configured project and output roots.
+`--outfile` and `--outdir` are mutually exclusive for one build request.
+An output path collision is an error before the first staged write.
+
+`--write=false` still performs resolution, loading, linking, printing, hashing, and validation.
+It stages artifacts in temporary storage and removes that storage after the request completes.
+It does not publish a manifest or metafile to a filesystem path.
+`--manifest -` or `--metafile -` may emit one requested metadata record on stdout.
+
+Environment variables are not an implicit configuration layer.
+An environment value affects a build only when an explicit option or documented host policy names it.
+The normalized configuration and its digest must not depend on an unrecorded environment read.
+
+### 9.4.2 Machine-readable command records
+
+`--diagnostics json` emits one UTF-8 JSON object per diagnostic on stderr.
+The record schema is defined in section 31.1.
+`knot analyze` emits one versioned JSON document on stdout unless a future explicit text mode is selected.
+Build progress, warnings, and diagnostics never appear on stdout.
+
+### 9.5 Implementation status and compatibility matrix
+
+The following matrix records the current native implementation boundary.
+The requirements in this document remain the release contract.
+
+| Area | Implemented behavior | Explicit boundary |
+| --- | --- | --- |
+| JavaScript and TypeScript | JavaScript, TypeScript, JSX, TSX, ESM, and CommonJS entry builds | Target-specific semantics outside the executable fixtures remain unsupported |
+| Built-in loaders | JavaScript-family modules, JSON, CSS, text, SVG, and file assets | JSONC, TOML, YAML, and custom file loaders are not implemented |
+| Custom loaders | `--loader <extension>=text` and `--loader <extension>=json` | Other loader names fail with `unsupported_loader` |
+| Package policy | Dependencies bundle by default; `--packages external` preserves bare package imports | Package resolution still requires the installed Knot graph |
+| Code splitting | Dynamic imports emit deterministic ESM chunks only with explicit `--splitting` | Splitting is disabled by default and dynamic imports fail without it |
+| Naming | Entry, shared-chunk, and asset templates support the implemented token subset | CSS naming templates, root-relative `[dir]`, and advanced hash collision policies are not implemented |
+| Publication | Writes stage output and atomically activate generations; `--write=false` builds into temporary storage and removes it without activation | No filesystem metadata is published for a non-writing build; one requested metadata record may be emitted to stdout |
+| Source maps | Linked, external, and inline maps are emitted for the implemented JavaScript and CSS paths | Prior-loader map composition, full name preservation, and `sourcesContent=include` are not implemented |
+| Metadata | Manifests include byte counts and SHA-256 digests for JavaScript, CSS, dynamic, shared, and copied asset outputs | Full import, export, CSS-association, and removal-reason records are not complete |
+| Diagnostics and controls | Invalid targets, source-map modes, loaders, package policies, and unsupported option values fail explicitly | JSON diagnostics, log levels, side-effect suppression, GPU execution, and raw tsconfig input are not implemented |
+| Browser verification | Browser execution is covered by the repository's real-page smoke workflow | The browser matrix is not yet the full CSS, HTML, source-map, and preload release suite |
+
+Adding behavior to a boundary requires an executable acceptance fixture and an update to this matrix.
+An explicit boundary is a current implementation status, not a relaxation of the initial stable release contract.
+The stable-release gate remains closed until every required goal has an implemented behavior, fixture coverage, and compatible metadata.
 
 ## 10. Build request and normalized configuration
 
@@ -495,16 +585,93 @@ Configuration precedence is:
 
 1. CLI flags.
 2. A typed build request supplied through the native API or JSON protocol.
-3. `bnpm.toml` build profile.
+3. `knot.toml` build profile.
 4. Supported transform fields from `tsconfig.json`.
 5. Built-in defaults.
 
 The normalized configuration must contain no unresolved relative paths or implicit environment reads.
-It must be printable through `bnpm build --show-config`.
+It must be printable through `knot build --show-config`.
 The normalized configuration digest is part of every affected cache key.
 
 Arbitrary JavaScript configuration files are not accepted.
 Declarative configuration keeps builds reproducible and avoids requiring a runtime.
+
+### 10.1 Normalized request record
+
+The normalized request has schema version `1`.
+It is the single input record shared by the CLI, native API, JSON protocol, cache, and diagnostics.
+
+| Field | Type | Requirement |
+| --- | --- | --- |
+| `schemaVersion` | integer | Must be `1` for this contract. |
+| `profile` | string | Identifies the selected `knot.toml` build profile. |
+| `entries` | ordered string array | Contains canonical entry paths in user-specified order. |
+| `cwd` | string | Contains the canonical invocation directory. |
+| `root` | string | Contains the canonical project root. |
+| `output` | object | Contains either `dir` or `file`, never both. |
+| `target` | enum | Is `browser` or `node`. |
+| `format` | enum | Is `esm` or `cjs`. |
+| `conditions` | ordered string array | Contains explicit resolver conditions. |
+| `external` | ordered string array | Contains explicit external patterns. |
+| `packages` | enum | Is `bundle` or `external`. |
+| `loaders` | ordered object | Maps extensions to built-in loader names. |
+| `transforms` | object | Contains compiler, define, drop, and minification settings. |
+| `treeShaking` | boolean | Records whether reachability removal is enabled. |
+| `splitting` | boolean | Records whether ESM chunk splitting is enabled. |
+| `chunkMergeOverhead` | object | Records the percentage and byte floor used for small-chunk merging. |
+| `preload` | enum | Is `none` or `static`. |
+| `sourceMap` | enum | Is `none`, `linked`, `external`, or `inline`. |
+| `sourcesContent` | enum | Is `include` or `exclude`. |
+| `naming` | object | Contains entry, chunk, CSS, and asset templates. |
+| `publicPath` | string | Contains the canonical public URL prefix. |
+| `cache` | object | Contains cache mode, canonical directory policy, byte limits, and portability policy. |
+| `clearOnError` | boolean | Records whether a failed watch rebuild removes owned outputs. |
+| `ignoreSideEffectsAnnotations` | boolean | Records the dependency annotation policy. |
+| `diagnostics` | enum | Is `text` or `json`. |
+| `logLevel` | enum | Is `silent`, `error`, `warning`, `info`, or `debug`. |
+| `write` | boolean | Records whether staged artifacts are activated. |
+| `watch` | boolean | Records whether the request owns a watch context. |
+| `budgets` | object | Contains normalized artifact budget limits. |
+| `execution` | object | Records CPU or explicitly requested GPU execution. |
+
+The normalized record must contain no host-dependent map iteration order.
+Object keys are serialized in lexicographic order.
+Arrays preserve semantic order.
+The configuration digest is SHA-256 over the canonical UTF-8 JSON record without a digest field.
+Secret definitions are replaced by stable redaction markers in displayed records but remain represented by their secret-aware cache identity.
+
+`knot build --show-config` prints the canonical normalized record and nothing else on stdout.
+The JSON protocol accepts and returns the same schema with an explicit protocol version.
+Unknown configuration keys and unsupported enum values fail before graph scanning.
+
+### 10.2 Configuration file rules
+
+`knot.toml` may contain only declarative values representable in the normalized request.
+Unknown keys, duplicate keys, and type mismatches are configuration errors.
+`tsconfig.json` contributes only fields explicitly listed as supported compiler transforms.
+It must not override bundler fields such as output paths, package policy, splitting, or publication.
+
+CLI flags override the JSON request, the `knot.toml` profile, supported `tsconfig.json` fields, and defaults in that order.
+The same field must have the same normalized value regardless of which accepted input layer supplied it.
+
+### 10.3 Profiles and native JSON protocol
+
+The default profile is `[build.default]`.
+Named profiles use `[build.<name>]` tables in `knot.toml` and are selected by `--profile`.
+Profile names use ASCII letters, digits, hyphens, and underscores.
+Profile inheritance is not supported in the initial release.
+
+The native JSON protocol accepts one complete request record and returns one complete response record.
+The request and response each contain an explicit protocol version and the normalized configuration or result record.
+The transport is newline-delimited UTF-8 JSON when carried over a pipe or socket.
+Diagnostics are returned in the response and are also eligible for stderr emission by the CLI adapter.
+End-of-input and cancellation terminate the request without activation.
+The protocol never interleaves progress text with JSON records.
+
+With `--write=false`, the CLI validates the complete planned artifact set and emits no artifact bytes by default.
+`--manifest -` or `--metafile -` may expose one requested metadata record on stdout.
+The two stdout metadata modes are mutually exclusive.
+The native API may return staged artifact bytes and metadata directly without activating them.
 
 ## 11. Entry points and module identity
 
@@ -655,17 +822,27 @@ A CommonJS module with dynamic export mutation remains wrapped and conservative.
 
 ### 13.4 ESM and CommonJS interoperation
 
-The compatibility policy must define:
+Knot uses the following interoperation policy.
 
-- Default import from CommonJS.
-- Named import from statically analyzable CommonJS.
-- `require()` of ESM for Node.js targets.
-- Namespace wrapping.
-- `__esModule` handling.
-- Top-level await restrictions.
+An ESM default import from CommonJS evaluates to the CommonJS module's final `module.exports` value.
+Statically analyzable CommonJS named exports are exposed as named namespace properties with the values observed after CommonJS evaluation.
+Unknown named imports produce a diagnostic instead of an undefined binding.
+`import * as namespace` exposes `default` plus the statically analyzable named properties.
+Dynamic import of CommonJS produces the same namespace shape asynchronously.
 
-Target-specific behavior must be covered by executable Node.js and browser fixtures.
-The linker must not choose an interoperation mode from file name alone when package type and parsed syntax provide stronger evidence.
+`require()` of synchronous ESM returns its namespace object.
+`require()` of ESM that depends on top-level await fails with `top_level_await` rather than returning a promise.
+An ESM namespace exposed to CommonJS uses live getters for its named exports and `default` where present.
+The `__esModule` property is an ordinary exported or assigned property and does not change the default-import rule.
+
+`import.meta.url` is the final module URL for browser output and the final file URL for Node.js output.
+`import.meta.resolve` follows the selected target runtime when available.
+`__filename` and `__dirname` are supplied only in CommonJS wrappers.
+The linker derives module format from package metadata and parsed syntax rather than a file extension alone.
+
+Top-level await is allowed in ESM output.
+It is rejected when synchronous CommonJS `require()` would cross the await boundary.
+These rules apply equally to bundled and preserved external edges.
 
 ### 13.5 Runtime helper library
 
@@ -767,10 +944,28 @@ A live `import("./module.js")` creates a lazy chunk boundary under ESM splitting
 The returned promise must resolve to the expected module namespace.
 Errors must remain asynchronous.
 
-When splitting is disabled, the target may be bundled behind an internal lazy module wrapper while `import()` remains asynchronous.
+When splitting is disabled, a dynamic import requires the later lazy-module-wrapper implementation and otherwise fails with `unsupported_split`.
 The module must not execute until the import expression runs.
 
 A dynamic import whose containing code is removed by tree shaking must not force output.
+
+### 15.3.1 Dynamic chunk runtime contract
+
+The initial ESM implementation uses native browser or Node.js dynamic import to load a generated chunk.
+It does not inject a JavaScript runtime loader.
+The rewritten specifier resolves from the importing artifact's public URL and preserves the configured public path semantics.
+
+Each dynamic edge maps to one manifest output record.
+The record contains the importer, source range, resolved module identity, output path, public URL, and full artifact digest.
+The dynamic chunk is not emitted when tree shaking removes its importing expression.
+
+Chunk-load failures remain asynchronous promise rejections.
+The bundler must not convert a failed load into a synchronous throw or a successful empty namespace.
+The generated chunk must not execute before its dynamic import is evaluated.
+Module evaluation and namespace caching follow the selected ESM runtime.
+
+Dynamic chunks are not preloaded by default.
+Preload generation is enabled only by an explicit option and must obey the public path, cross-origin, integrity, and CSP rules in section 15.6.
 
 ### 15.4 Chunk cycles
 
@@ -796,15 +991,25 @@ The merge must not:
 
 The metadata must report each merge and estimated bytes added to each affected root.
 
+Chunk size is measured from uncompressed emitted JavaScript bytes after transforms and minification and before source-map sidecar bytes.
+The initial overhead cap is the greater of 10 percent of that root's uncompressed JavaScript bytes and 32 KiB.
+The cap is evaluated independently for every initial root and is recorded in normalized configuration and metadata.
+Candidates below the configured threshold are considered in canonical chunk-path order.
+The planner repeats consideration until no eligible merge remains.
+The final manifest and metafile record the selected candidates, the bytes added to each initial root, and the reason any candidate was rejected.
+
 ### 15.6 Browser module preload
 
-For browser HTML entries with ESM splitting, the bundler may emit `modulepreload` links for static chunk dependencies.
-Dynamic-import helpers may preload transitive static dependencies before starting the import.
+`--preload none` is the default.
+`--preload static` emits `modulepreload` links only for statically reachable ESM chunks of HTML entries.
+The initial release does not emit dynamic-import preloads.
+Preload links are deterministic, deduplicated by final public URL, and inserted after the complete chunk plan is known.
 
-Preload generation must account for public paths, integrity metadata when available, cross-origin mode, and an explicitly configured CSP nonce source.
-It must be possible to disable preloads.
-
-The first stable implementation may support static entry preloads before dynamic-import preloads.
+Existing `integrity`, `crossorigin`, `referrerpolicy`, and `nonce` attributes are preserved.
+Knot does not invent a CSP nonce.
+If a generated preload requires a nonce that is not available from the source HTML, the build fails with `html_reference` instead of emitting an invalid policy.
+Local integrity values are recomputed for the final bytes when the source attribute identifies a local artifact.
+External integrity values remain unchanged.
 
 ## 16. Output formats and targets
 
@@ -828,6 +1033,17 @@ Package conditions prioritize `node`, `import`, and explicit user conditions acc
 CommonJS output must preserve `require`, `module`, `exports`, `__filename`, and `__dirname` behavior where the selected wrapper supports them.
 External ESM dependencies that cannot be required synchronously must produce a build diagnostic or remain behind dynamic `import()`.
 
+### 16.3.1 Target baseline
+
+The `browser` target means an evergreen browser with native ESM, dynamic import, URL resolution, and the browser APIs exercised by the acceptance fixtures.
+The supported browser baseline is the exact Chromium build pinned by the repository toolchain until a versioned browser-target option is added.
+The `node` target means Node.js 24 LTS semantics and built-ins.
+The repository `toolchain.json` must pin the browser engine version and Node.js major version used for acceptance.
+The selected baseline version is included in normalized configuration, cache keys, metafiles, and benchmark reports.
+Running without the pinned browser for browser verification is an infrastructure failure, not a supported baseline.
+The build must not inspect the host Node.js version to change target output.
+Unsupported syntax or runtime behavior outside the selected baseline fails explicitly instead of receiving an implicit polyfill.
+
 ### 16.4 IIFE
 
 IIFE output is deferred.
@@ -846,23 +1062,25 @@ The bundler consumes their module IR directly.
 JSON and JSONC loaders emit a default JavaScript export representing the parsed value.
 Named-property tree shaking may be added only when object identity, key order, and getter-free semantics remain correct.
 
-Duplicate JSON keys follow a documented parser policy.
-Malformed input fails with a source range.
-JSONC permits documented comments and trailing commas but does not silently accept arbitrary JavaScript.
+Duplicate JSON and JSONC keys are errors.
+Malformed input fails with a source range and `syntax_error`.
+JSONC accepts only `//` comments, `/* */` comments, and trailing commas in positions accepted by the JSON grammar.
+JSONC does not accept identifiers, expressions, directives, or arbitrary JavaScript.
 
 ### 17.3 TOML and YAML
 
-TOML and YAML loaders emit a default JavaScript export from a bounded data model.
-They must reject aliases, tags, numeric forms, or duplicate keys that the supported subset cannot represent safely and deterministically.
-
-The exact supported language versions must be documented.
-Parsing limits must prevent alias expansion and deeply nested input from exhausting memory.
+TOML uses TOML 1.0 syntax.
+YAML uses YAML 1.2 core-schema scalars, mappings, and sequences without aliases, anchors, tags, custom types, merge keys, or implicit executable values.
+TOML and YAML duplicate keys are errors.
+Unsupported numeric forms and nesting depth fail with a source range.
+The bounded data model and parser limits are part of the normalized loader configuration.
 
 ### 17.4 Text
 
 The text loader exports a JavaScript string.
-Source bytes must be valid under the configured text encoding policy.
-The default is UTF-8 with a specific diagnostic for invalid input.
+Source bytes must be valid UTF-8.
+An initial UTF-8 BOM is removed before export.
+Invalid byte sequences fail with an `invalid_encoding` diagnostic.
 
 ### 17.5 File assets
 
@@ -926,6 +1144,12 @@ JavaScript and CSS need not support identical legacy targets, but a build must r
 A Lightning CSS port or compatible design is preferred over inventing a second CSS semantics model.
 License and maintenance implications must be reviewed before adopting source.
 
+The initial CSS compatibility matrix covers CSS Syntax Level 3 declarations, selectors, custom properties, and the `@charset`, `@import`, `@layer`, `@media`, `@supports`, `@namespace`, `@font-face`, and `@keyframes` at-rules.
+Sass, Less, Stylus, arbitrary PostCSS syntax, and unknown executable at-rules are rejected.
+Unknown non-executable at-rules are preserved only when they contain no local asset or import edges.
+Target lowering and vendor-prefix decisions are recorded per transformed declaration in source maps and metadata.
+
+
 ### 18.4 CSS Modules
 
 Files ending in `.module.css` use local class and animation names by default.
@@ -939,10 +1163,18 @@ Generated names must be:
 - Source-mapped where tooling expects original names.
 - Configurable through a restricted naming template.
 
-The implementation supports `:local`, `:global`, and `composes` under a published compatibility matrix.
-A `composes` declaration must follow the supported simple-class rules.
-Composition cycles are errors.
-Cross-file composition with conflicting declarations must warn that order is undefined or reject under strict mode.
+### 18.4.1 CSS Module naming and exports
+
+The version 1 default local name is `_<local>_<hash>`.
+`hash` is the first eight URL-safe base64 characters of SHA-256 over the project-root-relative POSIX path, a zero byte, the original local name, and the compiler version.
+The prefix extends deterministically when two generated names collide.
+Custom names must use only the original local name, normalized relative path, and content identity.
+
+The supported syntax includes `:local`, `:global`, and simple `composes` declarations.
+CSS Module export arrays preserve source declaration order.
+Cross-file `composes` resolves transitively without duplicating a class name.
+Conflicting declarations produce a `css_order` warning and retain canonical source order.
+Composition cycles fail with `css_module_cycle`.
 
 ### 18.5 CSS imported from JavaScript
 
@@ -992,6 +1224,14 @@ The initial HTML loader discovers local references from:
 External HTTP, HTTPS, data, blob, mail, and fragment-only URLs remain unchanged.
 Protocol-relative URLs are external.
 
+### 19.2.1 Workers and non-script assets
+
+`link[rel="preload"][as="worker"]` discovers and rewrites a local worker file as a copied asset.
+It does not create a worker module graph.
+Worker scripts must be explicit entry points when they require bundling.
+The bundler does not synthesize service workers or infer `new Worker()` graphs from arbitrary JavaScript expressions in the initial release.
+
+
 ### 19.3 Script behavior
 
 Module scripts become browser ESM roots.
@@ -999,6 +1239,10 @@ Classic scripts remain classic scripts and require an output format that preserv
 The first stable HTML build may reject local classic scripts that contain module syntax instead of guessing.
 
 Script attributes such as `async`, `defer`, `crossorigin`, `integrity`, `referrerpolicy`, and `nonce` must be preserved unless an output transformation has a documented reason to replace them.
+For local generated scripts and stylesheets, an existing `integrity` value is recomputed from final bytes.
+An integrity value on an external URL is preserved unchanged.
+An unsupported integrity algorithm is a configuration error.
+
 
 Inline scripts are preserved by default.
 An explicit option may promote inline module scripts into generated entries in a later release.
@@ -1050,10 +1294,27 @@ Source-map names derive from their owning artifact unless explicitly configured.
 Unknown tokens are configuration errors.
 A template that can escape the output directory is rejected.
 
+### 20.1.1 Default templates
+
+Version 1 defaults are:
+
+| Artifact | Template |
+| --- | --- |
+| Entry JavaScript and HTML | `[dir][name]` |
+| Shared and dynamic chunks | `[name]-[hash]` |
+| CSS | `[name]` |
+| Copied assets | `[name]-[hash]` |
+
+`[dir]` uses project-root-relative POSIX segments and is empty for an entry at the root.
+The normalized template cannot contain `..`, an absolute segment, or a path separator introduced by `[name]`.
+Two artifacts with the same normalized output path are an `output_collision` error.
+The default CSS template does not silently add a directory or hash to resolve a collision.
+
 ### 20.2 Hash contract
 
-Artifact hashes use a documented algorithm and canonical byte input.
-The initial implementation should use SHA-256 and a collision-extended prefix rather than a process-seeded hash.
+Artifact hashes use SHA-256 over canonical emitted bytes and encode names with URL-safe base64 without padding.
+`[hash]` starts with an eight-character identity prefix and extends only when a collision requires it.
+`[hash:N]` requests at least `N` characters and extends on collision.
 
 The full artifact identity includes:
 
@@ -1096,6 +1357,14 @@ The source-map pipeline must:
 CSS and JavaScript maps are independent artifacts.
 HTML rewriting does not require a source map in the initial release.
 
+Every emitted map uses source-map version `3` and contains `file`, `sourceRoot`, `sources`, `names`, `mappings`, and optional `sourcesContent`.
+`file` is the owning output-relative artifact path.
+`sources` are canonical project-relative or package-relative paths with forward slashes.
+`sourceRoot` is empty unless a normalized configuration explicitly supplies a relative root.
+`mappings` is the canonical VLQ string produced from ordered generated segments.
+`sourcesContent` follows the normalized `sourcesContent` policy and is omitted rather than populated with host paths.
+Inline maps use the same schema after base64 encoding.
+
 A map is correct only when real Node.js, browser, and CSS tooling can map breakpoints and errors to the expected source locations.
 
 ## 22. Minification and compile-time replacement
@@ -1121,6 +1390,17 @@ Dropping `console` calls also drops argument evaluation under Bun-compatible beh
 Because this can remove side effects, diagnostics and documentation must state it clearly.
 Dropping `debugger` removes debugger statements without changing surrounding control flow.
 
+`--define` accepts assignments of the form `identifier-or-property-path=literal`.
+The left side is an ASCII identifier followed by zero or more dot-separated identifiers.
+The right side is `null`, `true`, `false`, a finite JSON number, or a JSON string with JSON escapes.
+Arrays, objects, calls, operators, environment expansion, and arbitrary JavaScript expressions are invalid.
+The replacement is applied to matching syntax nodes before reachability analysis and the canonical definition map is part of the configuration digest.
+
+`--drop debugger` removes debugger statements.
+`--drop console` removes calls whose callee is the unshadowed global `console` object.
+`--drop <qualified-name>` removes only direct calls whose statically resolved callee matches the normalized qualified name.
+An invalid or shadowed drop target is a configuration or resolution error and is never treated as a global side-effect-free function.
+
 ## 23. Externals and package policy
 
 ### 23.1 External matching
@@ -1139,6 +1419,49 @@ Metadata must state which rule externalized each edge.
 An external import is preserved in a format valid for the selected output.
 If the selected format cannot represent it, the build fails instead of inventing a global.
 
+External patterns use this grammar:
+
+- `name` matches one exact package name.
+- `name/subpath` matches one exact package subpath.
+- `name/*` matches any subpath below that package.
+- `./` or `/` prefixes match normalized project-relative or absolute paths.
+
+The initial release does not support negated patterns, regular expressions, or unescaped wildcard characters in package names.
+Patterns are matched against the original specifier before resolution and against the canonical resolved identity after resolution.
+The first matching explicit `--external` pattern wins in command-line order.
+Package policy is applied only when no explicit pattern matched.
+
+### 23.1.1 Resolution precedence and conditions
+
+The bundler delegates package resolution to the shared Knot resolver.
+It must not implement a second package-resolution algorithm.
+
+For every package, `exports` is evaluated before `main`, `module`, or other legacy entry fields.
+Package `imports` is evaluated for internal `#` specifiers before filesystem fallback.
+Package self-references use the same `exports` map as external package references.
+An absent matching `exports` or `imports` target is an error and must not silently fall through to an unrelated path.
+
+The effective condition order is:
+
+1. Browser ESM: `browser`, `import`, explicit user conditions in CLI order, `default`.
+2. Node.js ESM: `node`, `import`, explicit user conditions in CLI order, `default`.
+3. Node.js CommonJS: `node`, `require`, explicit user conditions in CLI order, `default`.
+Condition names are case-sensitive.
+Repeated explicit conditions are deduplicated by first occurrence.
+The built-in target and format conditions cannot be removed by user input.
+`default` is evaluated only after all preceding conditions fail.
+
+
+The resolver records the effective condition order in normalized configuration and edge metadata.
+The browser field may replace or exclude a package path only for the browser target and only after `exports` has been considered.
+Node.js built-ins remain external in Node.js output.
+Browser output rejects a reachable built-in unless an explicit external rule or alias supplies its behavior.
+
+External matching is applied first to the original specifier and then to the resolved identity.
+An explicit `--external` rule has precedence over package policy.
+`--packages external` applies only when no explicit rule selected bundling or externalization.
+The selected rule and the match phase are recorded on the edge.
+
 ### 23.2 Package externalization
 
 `--packages external` leaves bare package imports external while continuing to bundle relative and absolute project imports.
@@ -1147,6 +1470,14 @@ This mode is useful for Node.js libraries and services.
 Workspace packages follow an explicit policy.
 The default treats them as source packages and bundles them because they belong to the project graph.
 A configuration option may externalize workspace packages by package name.
+
+### 23.2.1 Package identity and lockfile integration
+
+Every resolved package identity contains its name, version, integrity, lockfile locator, package-root identity, and peer-context identity when applicable.
+The package-manager lockfile digest is part of the normalized configuration and every resolved-edge cache key.
+The bundler may read the installed package graph and content store but must not mutate them or resolve a package version outside the frozen lockfile.
+Workspace symlinks retain their package identity while their resolved source path remains canonicalized under the configured symlink policy.
+Two package instances with different peer contexts remain distinct even when their package paths are identical.
 
 ### 23.3 Native addons and WebAssembly
 
@@ -1192,7 +1523,70 @@ The detailed metafile includes:
 JSON is the stable machine format.
 A human report may be generated from JSON but is not a second compatibility contract.
 
-### 24.3 Budget checks
+### 24.3 Canonical record schemas
+
+All machine-readable records are UTF-8 JSON documents.
+The top-level `version` field is an integer schema version and is independent of the Knot tool version.
+Unknown required fields and unsupported schema versions are errors.
+Optional fields may be added only when consumers can ignore them without changing interpretation.
+
+The deployment manifest has this shape:
+
+```json
+{
+  "version": 1,
+  "entries": { "logical-entry": "output.js" },
+  "outputs": {
+    "output.js": {
+      "kind": "js",
+      "bytes": 123,
+      "digest": "base64-sha256",
+      "entry": "src/main.ts",
+      "publicUrl": "/output.js",
+      "sourceMap": "output.js.map",
+      "css": "output.css",
+      "imports": [],
+      "exports": [],
+      "dynamicImports": [],
+      "assets": [],
+      "references": []
+    }
+  }
+}
+```
+
+Manifest paths use forward slashes and are relative to the output root.
+Public URLs are represented separately from physical paths.
+`digest` is standard RFC 4648 base64 with padding and is always the complete SHA-256 digest.
+`sourceMap` is omitted for `none`, contains a relative map path for `linked` or `external`, and contains `"inline"` for `inline`.
+An output record must not reference a staged or omitted artifact.
+`dynamicImports` contains importer source ranges and resolved output paths.
+`assets` contains source identities and emitted public URLs.
+`references` contains structured HTML references and rewritten URLs.
+Each `dynamicImports` record contains `importer`, `source`, `range`, `resolved`, `output`, `publicUrl`, and `lazy`.
+Each `assets` record contains `source`, `output`, `publicUrl`, `bytes`, and `digest`.
+Each `references` record contains `kind`, `source`, `range`, `originalUrl`, `output`, and `publicUrl`.
+Ranges contain zero-based byte offsets and one-based line and column pairs.
+
+Metafile `timings` values are integer microseconds.
+Metafile `cache` values contain one hit or miss count per cache layer and the affected key identities.
+Metafile `execution` contains the selected backend, device identity when applicable, worker count, and CPU fallback events.
+Metafile `chunks` records contain root identities, member module identities, imports, exports, bytes, digest, and merge decisions.
+Metafile `modules` and `inputs` use canonical paths or package identities and never host-specific display paths.
+
+The metafile has these required top-level fields:
+
+`version`, `toolVersion`, `configDigest`, `inputs`, `edges`, `outputs`, `chunks`, `cache`, `timings`, `execution`, and `warnings`.
+Each input records its loader, bytes, digest, package identity, imports, exports, and side-effect state.
+Each edge records its kind, original specifier, source range, resolved identity, conditions, lazy state, external rule, and output relationship.
+Each output records its kind, bytes, digest, entry identity, imports, exports, CSS association, source map, and per-input contributions.
+Removed parts record one or more reason codes from compiler proof, package metadata, pure annotation, or explicit configuration.
+
+`knot analyze` emits the same `version` and `configDigest` fields plus ordered `entries`, `modules`, `edges`, `chunks`, `outputs`, `budgets`, and `warnings`.
+Analysis output contains graph and plan data but never claims that artifacts were activated.
+Canonical ordering applies to every object key and every semantically unordered array.
+
+### 24.4 Budget checks
 
 The analyzer may enforce configured limits for:
 
@@ -1227,12 +1621,62 @@ A parsed module key includes compiler version, content digest, loader, and parse
 A resolved edge key includes importer identity, specifier, attributes, conditions, package metadata identities, filesystem policy, and resolver version.
 A linked result key includes the reachable graph identities, target, format, external policy, side-effect policy, and linker version.
 A chunk plan key includes entry roots, live parts, splitting policy, and chunk planner version.
-A printed artifact key includes chunk identity, printer options, minifier options, naming dependencies, public path, and source-map mode.
+A cache payload is canonical for its layer:
+
+| Layer | Payload |
+| --- | --- |
+| Source content | UTF-8 bytes, encoding, line index, and content digest. |
+| Parsed or transformed IR | Versioned immutable module records with canonical integer identities. |
+| Resolution | Ordered resolved identity, conditions, package identity, and external decision. |
+| Linked graph | Canonical modules, symbols, parts, edges, roots, and removal reasons. |
+| Chunk plan | Ordered chunk identities, membership, imports, exports, and merge decisions. |
+| Printed artifact | Final bytes, source-map bytes or identity, output identity, and full digest. |
+| Copied asset | Source identity, emitted bytes or content digest, output path, and public URL. |
+
+
+### 25.1 Cache record envelope
+
+Every cache record has the following fields:
+
+| Field | Requirement |
+| --- | --- |
+| `version` | Identifies the cache-record schema. |
+| `kind` | Identifies one of the cache layers listed above. |
+| `key` | Contains the complete canonical SHA-256 key for the record. |
+| `toolVersion` | Identifies the compiler, resolver, linker, printer, or planner version that produced the payload. |
+| `dependencies` | Lists content, configuration, package, and record identities required to reuse the payload. |
+| `portable` | States whether the record can move between machines. |
+| `payloadDigest` | Authenticates the serialized payload bytes. |
+| `payload` | Contains the layer-specific canonical record or artifact bytes. |
+
+A cache lookup must validate the envelope version, key, dependency identities, payload digest, and portability policy before reuse.
+An invalid or incomplete record is a miss.
+Cache writes use temporary records and atomic rename so interruption cannot create a valid-looking partial record.
+Cache records never become published output without passing the normal artifact validation and activation path.
+Cache-hit and cache-miss decisions are recorded in the metafile when metadata is requested.
 
 Machine-portable cache records must not contain absolute source paths.
 Machine-local records must say so in their schema.
 Cache corruption becomes a miss and a diagnostic in debug mode.
 It must never become output.
+
+### 25.2 Cache policy and concurrency
+
+The normalized `cache` object contains `mode` (`read-write`, `read-only`, or `disabled`), `directory`, `maxBytes`, `maxRecordBytes`, and `portable`.
+The default mode is `read-write`.
+The default maximum cache size is 4 GiB and the default maximum record size is 512 MiB.
+The configured directory is canonicalized before it enters cache keys or diagnostics.
+
+Eviction runs only after a successful build and only when the cache exceeds `maxBytes`.
+It removes least-recently-used complete records, with canonical key order as the tie breaker.
+It never removes a record currently held open by a reader or writer.
+`read-only` mode never mutates records or eviction metadata.
+`disabled` mode neither reads nor writes cache records.
+
+Concurrent writers write a temporary record and publish it with an atomic no-replace operation.
+If another writer wins the same key, the loser validates the winner and discards its temporary record.
+Cache cleaning takes a lock that excludes record deletion but does not invalidate an active build.
+Interrupted locks are recoverable only after owner identity and liveness checks; an unverified lock is retained and reported as `cache_busy`.
 
 ## 26. Watch mode and incremental rebuilds
 
@@ -1254,13 +1698,31 @@ On change, the context must:
 9. Stage a complete new generation.
 10. Atomically activate the generation and delete obsolete outputs.
 
-Package manifest, tsconfig, bnpm configuration, lockfile, symlink, directory, and extension changes must invalidate their dependent decisions.
+`package.json`, `tsconfig.json`, `knot.toml`, `knot.lock`, symlink, directory, and extension changes must invalidate their dependent decisions.
 
 A failed rebuild keeps the previous successful generation unless `--clear-on-error` is set.
 Diagnostics must state that outputs are stale.
 
 Long-running contexts must release unreachable source generations, AST arenas, graph nodes, and artifact buffers.
 A no-op rebuild must not grow retained memory.
+
+### 26.1 Watch lifecycle and concurrency
+
+Each rebuild receives a monotonically increasing generation number.
+Only the newest generation may activate.
+An older generation may finish pure work, but it must discard staged output when a newer generation has superseded it.
+
+Filesystem events are coalesced using a bounded interval recorded in normalized configuration.
+The watcher must process create, modify, close-write, rename, delete, directory, symlink, package metadata, lockfile, and configuration events.
+Duplicate events for one path and generation are collapsed before invalidation.
+
+At most one generation owns publication for a build context.
+A new change during publication waits for the activation decision and then starts from the activated generation.
+Cancellation must terminate child work, release temporary resources, and preserve the last successful generation.
+
+`--clear-on-error` removes only outputs owned by the failed build after reporting the failure.
+Without that flag, consumers continue to see the previous successful generation and diagnostics identify it as stale.
+Closing a watch context stops event delivery, cancels pending work, closes host handles, and exits with status 0 unless the context itself failed.
 
 ## 27. Atomic output publication
 
@@ -1282,6 +1744,38 @@ Obsolete outputs from the previous generation are removed only after the new gen
 Files not owned by the prior manifest are never deleted.
 
 A process crash must leave either the previous valid generation, the next valid generation, or a clearly identified staging directory that is ignored by consumers.
+
+### 27.1 Publication protocol
+
+Every build generation has a unique opaque generation identity and a completion marker written only after all artifacts, maps, manifests, metadata, and budget checks pass.
+The completion marker contains the normalized configuration digest, artifact digests, and tool version.
+Consumers must ignore staging directories without a valid completion marker.
+
+On platforms with atomic directory replacement, activation swaps the complete staged directory in one operation.
+On platforms without that operation, activation switches one pointer or generation manifest that names an already complete directory.
+Consumers must never discover artifact paths by scanning an incomplete staging directory.
+
+The writer flushes staged file contents and the required parent metadata according to the configured durability policy before activation.
+The selected durability policy and any unsupported flush operation are recorded in debug diagnostics.
+The activation record is written last and is itself replaced atomically.
+
+Recovery validates the previous active generation and any complete staged generation before selecting one.
+An incomplete or digest-invalid generation is ignored and may be removed after recovery.
+Recovery must not delete files outside the generations owned by the build manifest.
+
+Failure injection must cover staging, artifact writes, map writes, manifest writes, flush, activation, recovery, and obsolete-output cleanup.
+Every injected failure must leave either the previous complete generation or no active generation, never a mixture.
+
+### 27.2 Publication ownership
+
+An output root has at most one active publishing process.
+The publisher acquires an atomic lock containing the output-root identity, process identity, start time, generation identity, and normalized configuration digest.
+Another process targeting the same root fails before staging activation with `publication_busy`.
+Watch generations in one process use the context ownership rule instead of taking a second process lock.
+
+Lock recovery requires a failed owner-liveness check and a lock record whose output-root identity matches the requested root.
+An unverified lock is not removed.
+Recovery never deletes files that are not named by the active or recovered generation manifest.
 
 ## 28. Extension model without a JavaScript runtime
 
@@ -1384,7 +1878,7 @@ The retry must appear in debug diagnostics and the metafile.
 ## 30. Architecture
 
 ```text
-entrypoints + bnpm.toml + tsconfig.json + bnpm.lock
+entrypoints + knot.toml + tsconfig.json + knot.lock
                          |
                          v
                normalized build request
@@ -1484,6 +1978,57 @@ Diagnostic ordering is canonical across CPU count and backend.
 The scanner should continue after independent failures to report a useful batch.
 No new generation may activate when any required artifact has an error.
 
+### 31.1 Diagnostic record and code registry
+
+The versioned JSON diagnostic record has this shape:
+
+```json
+{
+  "version": 1,
+  "code": "unresolved_import",
+  "severity": "error",
+  "phase": "resolve",
+  "message": "Cannot resolve the imported module.",
+  "location": {
+    "path": "src/main.ts",
+    "start": { "offset": 10, "line": 1, "column": 10 },
+    "end": { "offset": 20, "line": 1, "column": 20 }
+  },
+  "related": [],
+  "chain": [],
+  "suggestion": "Install the package or mark it external."
+}
+```
+
+`offset` is a zero-based byte offset.
+`line` and `column` are one-based.
+Locations use UTF-8 byte offsets and UTF-16 columns only where the underlying compiler contract requires UTF-16 columns.
+Absent locations, related ranges, chains, and suggestions are represented by `null` or empty arrays according to the record schema.
+
+`severity` is one of `error`, `warning`, or `info`.
+`phase` is one of `config`, `scan`, `resolve`, `load`, `parse`, `link`, `shake`, `chunk`, `print`, `map`, `hash`, `write`, `watch`, or `extension`.
+`location` identifies a project-relative path or package identity.
+The end position is exclusive.
+Each `related` item contains `label` and `location`.
+Each `chain` item contains `kind`, `specifier`, `importer`, and `resolved` when available.
+`suggestion` is a string or an ordered string array.
+
+The initial stable code registry is:
+
+| Category | Codes |
+| --- | --- |
+| Configuration and loading | `invalid_option`, `duplicate_option`, `unsupported_option`, `unsupported_loader`, `unsupported_target`, `unsupported_format`, `invalid_path`, `unsupported_split`, `invalid_encoding`, `invalid_integrity` |
+| Resolution | `unresolved_import`, `missing_export`, `ambiguous_export`, `invalid_package_conditions`, `external_format` |
+| JavaScript semantics | `syntax_error`, `unsupported_interop`, `top_level_await`, `non_literal_dynamic_import` |
+| CSS and HTML | `css_cycle`, `css_order`, `css_module_cycle`, `html_reference` |
+| Outputs and resources | `asset_root`, `output_collision`, `path_traversal`, `sourcemap_error`, `budget_exceeded`, `resource_limit`, `publication_error`, `publication_busy` |
+| Cache and extensions | `cache_corrupt`, `cache_busy`, `extension_timeout`, `extension_crash` |
+| Warnings | `side_effect_annotation`, `stale_output`, `cache_miss` |
+
+Codes are never reused for a different meaning.
+New codes are additive.
+An implementation must use the nearest existing code rather than embedding an unstable message in place of a code.
+
 ## 32. Security and reliability
 
 - Treat source files, package metadata, source maps, data files, HTML, CSS, assets, cache records, and extension output as untrusted.
@@ -1502,6 +2047,42 @@ No new generation may activate when any required artifact has an error.
 - Record extension identity in every extension diagnostic.
 - Prevent zip, YAML alias, or recursive-data expansion attacks in loaders.
 - Avoid embedding absolute user paths in portable artifacts.
+
+Static asset inputs must be regular files.
+Directories, sockets, FIFOs, device nodes, and unresolved symlinks are rejected.
+Symlinks are resolved only when their target remains inside the configured asset root and the normalized symlink policy permits them.
+Asset size is checked before allocation and again before publication.
+Output files use deterministic non-executable permissions unless the selected target explicitly requires executable output.
+
+### 32.2 Asset and reference trust boundaries
+
+An HTML or CSS local reference is resolved relative to its owning source file, normalized, and checked against the configured project or asset root before reading.
+Encoded traversal, alternate separators, and decoded paths that escape the root are rejected.
+Data URLs are bounded by the asset and output limits and are never fetched.
+Remote URLs are preserved and are never fetched during a build.
+
+### 32.1 Resource limit defaults
+
+Every limit is finite, appears in the normalized configuration, and produces a `resource_limit` diagnostic when exceeded.
+The initial defaults are:
+
+| Limit | Default |
+| --- | ---: |
+| Graph modules | 100,000 |
+| Graph edges | 500,000 |
+| Maximum import depth | 1,024 |
+| Total source bytes | 1 GiB |
+| Individual asset bytes | 256 MiB |
+| HTML references per entry | 100,000 |
+| CSS imports per graph | 10,000 |
+| Generated artifacts | 100,000 |
+| Source-map segments per artifact | 10,000,000 |
+| Total staged output bytes | 4 GiB |
+| Diagnostic evidence bytes | 8 MiB |
+
+Limits apply before allocation where the relevant input size is known.
+An override must be smaller than the host hard limit and must participate in the configuration digest.
+The implementation must reject values that disable a limit by using zero, a negative value, or an unbounded sentinel.
 
 ## 33. Performance design
 
@@ -1559,6 +2140,38 @@ Canonical ordering is required for:
 - Diagnostics.
 
 No observable output may depend on pointer addresses, hash-map iteration order, thread count, worker index, task completion order, CPU architecture, or GPU scheduling.
+
+### 33.4 Verification and benchmark contract
+
+The independent acceptance driver is Node.js 24 LTS with `node:test`.
+Browser acceptance runs against an exact Chromium build pinned by the repository toolchain.
+The browser fixture must load the emitted page through HTTP and observe script execution, CSS application, local asset loads, source-map references, and public-path behavior.
+
+The release matrix must contain deterministic fixtures for:
+
+- ESM bindings, re-exports, cycles, and top-level await.
+- CommonJS caching, mutation, and ESM interoperation.
+- Package exports, imports, browser replacements, conditions, workspaces, and built-ins.
+- Tree shaking, side-effect metadata, pure annotations, and removal reasons.
+- Static entries, shared chunks, dynamic chunks, chunk cycles, and preload policy.
+- JSON, JSONC, TOML, YAML, text, CSS, CSS Modules, HTML, and static assets.
+- Linked, external, inline, and composed source maps.
+- Watch invalidation, cache reuse, cancellation, recovery, and atomic publication.
+- Resource limits, malformed inputs, path traversal, symlink escapes, and decompression or recursive-data bounds.
+
+Every fixture observes public artifacts, runtime behavior, diagnostics, or state transitions.
+Tests must not assert private helper calls or incidental formatting.
+Every release candidate runs the CPU path and any supported Metal or CUDA path with canonical output-equivalence checks.
+
+Benchmarks run only after the relevant correctness suite is green.
+Each report records the toolchain version, backend, hardware, target, format, entries, graph shape, source-map mode, minification settings, cache state, storage medium, worker count, and GPU transfer time.
+Performance claims without byte-equivalence and runtime-equivalence evidence are invalid.
+
+The repository `toolchain.json` is the version authority for Bend2, Node.js, Chromium, the native C compiler, and any compatibility tools used by a report.
+Each benchmark case uses three warm-up runs followed by ten measured runs with fixed input bytes and fixed normalized configuration.
+Cold-cache and warm-cache cases are separate cases.
+Reports include median, p95, minimum, maximum, and the complete raw sample list.
+Changing hardware, operating-system version, toolchain, fixture, or configuration starts a new baseline rather than appending to an old one.
 
 ## 34. Delivery plan
 
@@ -1841,17 +2454,16 @@ Report scan, resolve, load, parse, link, shake, chunk, print, CSS, HTML, map, ha
 2. Can the linker update symbol representatives without copying large immutable tables?
 3. Which HTML parser or streaming rewriter can be adopted with an acceptable license and host boundary?
 4. Should the CSS implementation port Lightning CSS concepts, call a host library, or implement a smaller initial standards subset?
-5. What browser target syntax should `bnpm.toml` accept, and should it consume Browserslist data without executing JavaScript?
+5. What browser target syntax should `knot.toml` accept, and should it consume Browserslist data without executing JavaScript?
 6. Which hash implementation is efficient and portable across Bend2 CPU, Metal, and CUDA backends?
 7. How should cyclic chunk components derive names while keeping hashes content-addressed and stable?
-8. Should Node.js builds bundle packages by default in stable release, or change to external-by-default before compatibility freezes?
-9. Which CommonJS named-export analysis is safe enough for stable support?
-10. Should HTML inline module scripts remain inline permanently or become optional virtual entry points?
-11. Which CSS import cycles should warn, fail, or follow browser behavior?
-12. Can CSS shared chunks preserve route and cascade order without a runtime loader?
-13. What stable native or JSON build API should framework tools consume without a JavaScript runtime?
-14. What output-generation activation strategy works atomically on Windows as well as POSIX filesystems?
-15. Which graph sizes, if any, make GPU bitset reachability beat optimized multicore CPU execution end to end?
+8. Which CommonJS named-export analysis is safe enough for stable support?
+9. Should HTML inline module scripts remain inline permanently or become optional virtual entry points?
+10. Which CSS import cycles should warn, fail, or follow browser behavior?
+11. Can CSS shared chunks preserve route and cascade order without a runtime loader?
+12. What stable native or JSON build API should framework tools consume without a JavaScript runtime?
+13. What output-generation activation strategy works atomically on Windows as well as POSIX filesystems?
+14. Which graph sizes, if any, make GPU bitset reachability beat optimized multicore CPU execution end to end?
 
 These questions do not permit undefined behavior in a release.
 Unresolved behavior must remain unsupported with a stable diagnostic.
@@ -1928,6 +2540,16 @@ Shipping core loaders first avoids freezing a weak extension ABI.
 Content-hashed chunks and manifests are mutually dependent deployment artifacts.
 Atomic generation activation prevents clients from observing incompatible old and new files.
 
+### Use SHA-256 for artifact identity
+
+Artifact names and metadata use SHA-256 over canonical emitted bytes.
+Short names use a deterministic prefix, while manifests retain the full digest.
+
+### Parse HTML structure before rewriting references
+
+HTML comments, scripts, styles, attributes, and `srcset` candidates have different lexical rules.
+The implementation uses parser state rather than global string replacement so non-document text remains unchanged.
+
 ### Parallelize modules and chunks on CPU first
 
 Module parsing, local analysis, CSS processing, asset hashing, and chunk printing provide independent work.
@@ -1937,3 +2559,9 @@ Irregular graph coordination and variable-length output do not justify a GPU-fir
 
 The product must remain complete on CPU-only systems.
 GPU execution is enabled automatically only when equivalent output and an end-to-end gain are both demonstrated.
+
+### Bundle dependencies by default
+
+The initial stable release bundles package dependencies by default for both browser and Node.js builds.
+`--packages external` is the explicit opt-out for bare package imports.
+This keeps deployment output self-contained while preserving an intentional externalization path for Node.js libraries and services.

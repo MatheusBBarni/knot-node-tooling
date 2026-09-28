@@ -16,19 +16,19 @@ test("build emits a separate chunk for a dynamic import", async (t) => {
   });
   t.after(() => removeWorkspace(workspace));
 
-  const result = await runProcess(knot, ["build", "main.ts", "--outfile", "out.js"], {
+  const result = await runProcess(knot, ["build", "main.ts", "--outdir", "dist", "--splitting"], {
     cwd: workspace,
   });
   assert.equal(result.status, 0, result.stderr);
 
-  const js = await readFile(path.join(workspace, "out.js"), "utf8");
+  const js = await readFile(path.join(workspace, "dist/main.js"), "utf8");
   const m = js.match(/import\s*\(\s*["'](\.\/[^"']+)["']/);
   assert.ok(m, js);
   assert.doesNotMatch(js, /function val/);
 
-  const chunk = await readFile(path.join(workspace, m[1].slice(2)), "utf8");
+  const chunk = await readFile(path.join(workspace, "dist", m[1].slice(2)), "utf8");
   assert.match(chunk, /function val/);
-  const run = await runProcess(process.execPath, ["out.js"], { cwd: workspace });
+  const run = await runProcess(process.execPath, ["dist/main.js"], { cwd: workspace });
   assert.equal(run.status, 0, run.stderr);
   assert.equal(run.stdout, "7\n");
 });

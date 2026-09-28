@@ -36,6 +36,9 @@ knot --version
 A project-local install exposes the same command through `npx knot` and `node_modules/.bin/knot`.
 `npx @matheusbbarni/knot` also works, because that form names the package.
 
+`knot --upgrade` refreshes the globally installed wrapper and platform package by running `npm install --global @matheusbbarni/knot@latest` without a shell.
+It does not update project dependencies.
+
 Another global package can ship a `bin` named `knot`.
 npm points the global `knot` shim at whichever package was installed or updated last.
 The published README says that in one sentence.

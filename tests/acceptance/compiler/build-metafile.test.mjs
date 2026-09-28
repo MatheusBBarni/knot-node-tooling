@@ -18,7 +18,7 @@ test("build writes a metafile with inputs and outputs", async (t) => {
 
   const result = await runProcess(
     knot,
-    ["build", "main.ts", "--outfile", "out.js", "--metafile", "meta.json"],
+    ["build", "main.ts", "--outfile", "out.js", "--metafile", "meta.json", "--sourcemap", "external"],
     { cwd: workspace },
   );
   assert.equal(result.status, 0, result.stderr);
@@ -33,5 +33,10 @@ test("build writes a metafile with inputs and outputs", async (t) => {
   const outKeys = Object.keys(meta.outputs);
   assert.ok(outKeys.some((k) => k.includes("out.js") || k.endsWith("out.js")));
   const out = meta.outputs[outKeys.find((k) => k.includes("out.js"))];
-  assert.ok(typeof out.bytes === "number" || typeof out.size === "number");
+  assert.equal(out.kind, "js");
+  assert.equal(out.entry.endsWith("main.ts"), true);
+  assert.deepEqual(out.imports, ["./lib.ts"]);
+  assert.deepEqual(out.exports, []);
+  assert.match(out.digest, /^[A-Za-z0-9+/]+=*$/);
+  assert.equal(out.sourceMap, "out.js.map");
 });

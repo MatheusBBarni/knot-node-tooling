@@ -377,6 +377,46 @@ def u32_mod_go(+n: U32, +d: U32) -> U32:
 
 def b64_digit(+d: U32) -> String:
   String.take(String.drop("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", nat_of_u32(d)), 1n)
+def b64_digit_nat(+d: Nat) -> String:
+  String.take(String.drop("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", d), 1n)
+
+def char_nat(c: Char) -> Nat:
+  match c:
+    case Chr{x}:
+      nat_of_u32(x)
+
+def b64_triplet_kind(a0: Nat, a1: Nat, a2: Nat, a3: Nat, one: Bool, two: Bool) -> String:
+  match one:
+    case True{}:
+      b64_digit_nat(a0) ++ b64_digit_nat(a1) ++ "=="
+    case False{}:
+      match two:
+        case True{}:
+          b64_digit_nat(a0) ++ b64_digit_nat(a1) ++ b64_digit_nat(a2) ++ "="
+        case False{}:
+          b64_digit_nat(a0) ++ b64_digit_nat(a1) ++ b64_digit_nat(a2) ++ b64_digit_nat(a3)
+
+def b64_triplet(a: Nat, b: Nat, c: Nat, +nbytes: Nat) -> String:
+  +n : Nat = Nat.add(Nat.mul(a, 65536n), Nat.add(Nat.mul(b, 256n), c))
+  +a0 : Nat = Nat.div(n, 262144n)
+  +a1 : Nat = Nat.mod(Nat.div(n, 4096n), 64n)
+  +a2 : Nat = Nat.mod(Nat.div(n, 64n), 64n)
+  +a3 : Nat = Nat.mod(n, 64n)
+  b64_triplet_kind(a0, a1, a2, a3, Nat.is_eq(nbytes, 1n), Nat.is_eq(nbytes, 2n))
+
+@unsafe def b64_encode_go(+s: String, +acc: String) -> String:
+  match s:
+    case SNil{}:
+      acc
+    case SCon{a, SNil{}}:
+      acc ++ b64_triplet(char_nat(a), 0n, 0n, 1n)
+    case SCon{a, SCon{b, SNil{}}}:
+      acc ++ b64_triplet(char_nat(a), char_nat(b), 0n, 2n)
+    case SCon{a, SCon{b, SCon{c, t}}}:
+      b64_encode_go(t, acc ++ b64_triplet(char_nat(a), char_nat(b), char_nat(c), 3n))
+
+def b64_encode(s: String) -> String:
+  b64_encode_go(s, "")
 
 def vlq_signed(+abs_n: U32, neg: Bool) -> U32:
   match neg:
@@ -419,6 +459,8 @@ def vlq_delta(+prev: U32, +cur: U32) -> String:
 
 def map_seg(+gen_col: U32, +prev_gc: U32, +src_line: U32, +prev_sl: U32, +src_col: U32, +prev_sc: U32) -> String:
   vlq_delta(prev_gc, gen_col) ++ vlq_encode(0, False{}) ++ vlq_delta(prev_sl, src_line) ++ vlq_delta(prev_sc, src_col)
+def map_seg_source(+gen_col: U32, +prev_gc: U32, +source: U32, +prev_source: U32, +src_line: U32, +prev_sl: U32, +src_col: U32, +prev_sc: U32) -> String:
+  vlq_delta(prev_gc, gen_col) ++ vlq_delta(prev_source, source) ++ vlq_delta(prev_sl, src_line) ++ vlq_delta(prev_sc, src_col)
 
 def map_segs_emit(first: Bool, +seg: String) -> String:
   match first:
@@ -453,6 +495,9 @@ def map_mappings(toks: List<&2, Token>) -> String:
 
 def make_map(+file: String, toks: List<&2, Token>) -> String:
   "{\"version\":3,\"file\":" ++ json_str(basename(js_path(file))) ++ ",\"sources\":[" ++ json_str(file) ++ "],\"names\":[],\"mappings\":" ++ json_str(map_mappings(toks)) ++ "}"
+
+def make_map_sources(+file: String, sources: List<&2, String>, toks: List<&2, Token>) -> String:
+  "{\"version\":3,\"file\":" ++ json_str(basename(js_path(file))) ++ ",\"sources\":" ++ json_list(sources) ++ ",\"names\":[],\"mappings\":" ++ json_str(map_mappings(toks)) ++ "}"
 
 def tok_rev(xs: List<&2, Token>, acc: List<&2, Token>) -> List<&2, Token>:
   match xs:
@@ -1056,6 +1101,13 @@ def transpile_min(+file: String, source: String, minify: Bool) -> TRes:
 def export_kw(+t: String) -> Bool:
   Bool.or(String.eq(t, "function"), Bool.or(String.eq(t, "const"), Bool.or(String.eq(t, "let"), Bool.or(String.eq(t, "var"), String.eq(t, "class")))))
 
+def export_step(+tokens: List<&2, Token>, +acc: List<&2, String>, +text: String) -> Sc:
+  match text:
+    case "default":
+      Sc{tokens, Con{"default", acc}, "", f_bool()}
+    case _:
+      Sc{tokens, acc, text, export_kw(text)}
+
 @unsafe def scan_go(sel: Nat, st: Sc) -> List<&2, String>:
   match sel:
     case 0n:
@@ -1085,7 +1137,7 @@ def export_kw(+t: String) -> Bool:
                     case Nil{}:
                       str_rev(acc, Nil{})
                     case Con{Token{+text2, start, end, line, col}, rest2}:
-                      scan_go(3n, Sc{rest2, acc, text2, export_kw(text2)})
+                      scan_go(3n, export_step(rest2, acc, text2))
             case 1n+s3:
               match s3:
                 case 0n:
@@ -1175,12 +1227,12 @@ def import_acc(acc: List<&2, String>, +text: String) -> List<&2, String>:
               match s3:
                 case 0n:
                   match st:
-                    case Sc{+tokens, +acc, text, +flag}:
+                    case Sc{+tokens, +acc, +text, +flag}:
                       match flag:
                         case True{}:
                           scan_imp(4n, Sc{tokens, acc, "", f_bool()})
                         case False{}:
-                          scan_imp(0n, Sc{tokens, acc, "", f_bool()})
+                          scan_imp(0n, Sc{tokens, import_acc(acc, text), "", f_bool()})
                 case 1n+s4:
                   match s4:
                     case 0n:
@@ -1410,6 +1462,119 @@ def imports_lex(lr: LexRes) -> List<&2, String>:
 def imports_of(source: String) -> List<&2, String>:
   imports_lex(lex(source))
 
+@unsafe def default_import_go(sel: Nat, st: Sc) -> List<&2, String>:
+  match sel:
+    case 0n:
+      match st:
+        case Sc{+tokens, +acc, text, flag}:
+          match tokens:
+            case Nil{}:
+              str_rev(acc, Nil{})
+            case Con{Token{+text2, start, end, line, col}, rest2}:
+              default_import_go(1n, Sc{rest2, acc, text2, String.eq(text2, "import")})
+    case 1n:
+      match st:
+        case Sc{+tokens, +acc, text, +flag}:
+          match flag:
+            case True{}:
+              default_import_go(2n, Sc{tokens, acc, text, f_bool()})
+            case False{}:
+              default_import_go(0n, Sc{tokens, acc, "", f_bool()})
+    case 2n:
+      match st:
+        case Sc{+tokens, +acc, text, flag}:
+          match tokens:
+            case Nil{}:
+              str_rev(acc, Nil{})
+            case Con{Token{+text2, start, end, line, col}, rest2}:
+              default_import_go(3n, Sc{rest2, acc, text2, tok_is_ident(text2)})
+    case 3n:
+      match st:
+        case Sc{+tokens, +acc, +text, +flag}:
+          match flag:
+            case True{}:
+              default_import_go(4n, Sc{tokens, acc, text, f_bool()})
+            case False{}:
+              default_import_go(0n, Sc{tokens, acc, "", f_bool()})
+    case 4n:
+      match st:
+        case Sc{+tokens, +acc, text, +flag}:
+          match tokens:
+            case Nil{}:
+              str_rev(acc, Nil{})
+            case Con{Token{+text2, start, end, line, col}, rest2}:
+              default_import_go(5n, Sc{rest2, acc, text, String.eq(text2, "from")})
+    case 5n:
+      match st:
+        case Sc{+tokens, +acc, text, +flag}:
+          match flag:
+            case True{}:
+              default_import_go(6n, Sc{tokens, acc, text, True{}})
+            case False{}:
+              default_import_go(0n, Sc{tokens, acc, "", f_bool()})
+    case 6n:
+      match st:
+        case Sc{+tokens, +acc, text, +flag}:
+          match tokens:
+            case Nil{}:
+              str_rev(acc, Nil{})
+            case Con{Token{+text2, start, end, line, col}, rest2}:
+              default_import_go(7n, Sc{rest2, acc, text ++ "\t" ++ unquote(text2), is_string_tok(text2)})
+    case _:
+      match st:
+        case Sc{+tokens, +acc, text, +flag}:
+          match flag:
+            case True{}:
+              default_import_go(0n, Sc{tokens, Con{text, acc}, "", f_bool()})
+            case False{}:
+              default_import_go(0n, Sc{tokens, acc, "", f_bool()})
+
+def default_imports_lex(lr: LexRes) -> List<&2, String>:
+  match lr:
+    case LexErr{msg, line, col}:
+      Nil{}
+    case LexOk{tokens}:
+      default_import_go(0n, Sc{tokens, Nil{}, "", f_bool()})
+
+def default_imports_of(source: String) -> List<&2, String>:
+  default_imports_lex(lex(source))
+
+def default_pair_name_parts(parts: List<&2, String>) -> String:
+  match parts:
+    case Nil{}:
+      ""
+    case Con{+name, _}:
+      name
+
+def default_pair_path_parts(parts: List<&2, String>) -> String:
+  match parts:
+    case Nil{}:
+      ""
+    case Con{_, rest}:
+      match rest:
+        case Nil{}:
+          ""
+        case Con{+path, _}:
+          path
+
+def default_import_name(+pair: String) -> String:
+  default_pair_name_parts(String.split(pair, '\t'))
+
+def default_import_binding_kind(+path: String, module: Bool) -> String:
+  match module:
+    case True{}:
+      +base : String = basename(path)
+      "__knot_default_" ++ String.take(base, Nat.sub(String.length(base), 11n))
+    case False{}:
+      "__knot_default_value"
+
+def default_import_binding(+pair: String) -> String:
+  +path : String = default_pair_path_parts(String.split(pair, '\t'))
+  default_import_binding_kind(path, String.ends_with(path, ".module.css"))
+def default_import_path(+pair: String) -> String:
+  default_pair_path_parts(String.split(pair, '\t'))
+
+
 def exports_lex(lr: LexRes) -> List<&2, String>:
   match lr:
     case LexErr{msg, line, col}:
@@ -1419,6 +1584,24 @@ def exports_lex(lr: LexRes) -> List<&2, String>:
 
 def exports_of(source: String) -> List<&2, String>:
   exports_lex(lex(source))
+
+def strip_kw_sel(+text: String) -> Nat:
+  match text:
+    case "default":
+      0n
+    case "(":
+      0n
+    case _:
+      3n
+
+def strip_kw_state(+tokens: List<&2, Token>, +acc: List<&2, Token>, +tok: Token, +text: String) -> Ts:
+  match text:
+    case "default":
+      Ts{tokens, Con{tok_lit("="), Con{tok_lit("__knot_default_value"), Con{tok_lit("const"), acc}}}, dummy_tok(), "", f_bool()}
+    case "(":
+      Ts{Con{Token{"(", 0, 0, 0, 0}, tokens}, Con{tok, acc}, dummy_tok(), "", f_bool()}
+    case _:
+      Ts{Con{Token{text, 0, 0, 0, 0}, tokens}, acc, dummy_tok(), "", f_bool()}
 
 @unsafe def strip_ie(sel: Nat, st: Ts) -> List<&2, Token>:
   match sel:
@@ -1480,13 +1663,13 @@ def exports_of(source: String) -> List<&2, String>:
                                 case Nil{}:
                                   strip_ie(0n, Ts{Nil{}, Con{tok, acc}, dummy_tok(), "", f_bool()})
                                 case Con{Token{+text2, start, end, line, col}, rest2}:
-                                  strip_ie(6n, Ts{rest2, acc, tok, text2, String.eq(text2, "(")})
+                                  strip_ie(strip_kw_sel(text2), strip_kw_state(rest2, acc, tok, text2))
                         case _:
                           match st:
                             case Ts{+tokens, +acc, +tok, +text, +flag}:
                               match flag:
                                 case True{}:
-                                  strip_ie(0n, Ts{Con{Token{"(", 0, 0, 0, 0}, tokens}, Con{tok, acc}, dummy_tok(), "", f_bool()})
+                                  strip_ie(0n, Ts{tokens, Con{tok_lit("="), Con{tok_lit("__knot_default_value"), Con{tok_lit("const"), acc}}}, dummy_tok(), "", f_bool()})
                                 case False{}:
                                   strip_ie(3n, Ts{Con{Token{text, 0, 0, 0, 0}, tokens}, acc, dummy_tok(), "", f_bool()})
 
@@ -1719,6 +1902,16 @@ def transpile_bundle_lex_keep(+file: String, lr: LexRes, keep: List<&2, String>,
 def transpile_bundle_keep(+file: String, source: String, keep: List<&2, String>, shake: Bool) -> TRes:
   transpile_bundle_lex_keep(file, lex(source), keep, shake)
 
+def transpile_bundle_lex_keep_min(+file: String, lr: LexRes, keep: List<&2, String>, shake: Bool, minify: Bool) -> TRes:
+  match lr:
+    case LexErr{msg, line, col}:
+      TErr{msg, line, col}
+    case LexOk{tokens}:
+      transpile_pick(file, xform(0n, Xs{shake_if(strip_ie(0n, Ts{tokens, Nil{}, dummy_tok(), "", f_bool()}), keep, shake), Nil{}, 0, "", Nil{}, dummy_tok(), f_bool()}), minify)
+
+def transpile_bundle_keep_min(+file: String, source: String, keep: List<&2, String>, shake: Bool, minify: Bool) -> TRes:
+  transpile_bundle_lex_keep_min(file, lex(source), keep, shake, minify)
+
 def after_tab(s: String) -> String:
   match s:
     case SNil{}:
@@ -1827,6 +2020,16 @@ def min_ids_toks_if(toks: List<&2, Token>, ids: Bool) -> List<&2, Token>:
       min_ids_toks(toks)
     case False{}:
       toks
+def transpile_bundle_lex_opt(+file: String, lr: LexRes, keep: List<&2, String>, shake: Bool, minify: Bool, ids: Bool) -> TRes:
+  match lr:
+    case LexErr{msg, line, col}:
+      TErr{msg, line, col}
+    case LexOk{tokens}:
+      +kept : List<&2, Token> = shake_if(strip_ie(0n, Ts{tokens, Nil{}, dummy_tok(), "", f_bool()}), keep, shake)
+      transpile_pick(file, min_ids_toks_if(xform(0n, Xs{kept, Nil{}, 0, "", Nil{}, dummy_tok(), f_bool()}), ids), minify)
+
+def transpile_bundle_opt(+file: String, source: String, keep: List<&2, String>, shake: Bool, minify: Bool, ids: Bool) -> TRes:
+  transpile_bundle_lex_opt(file, lex(source), keep, shake, minify, ids)
 
 def transpile_lex_opt(+file: String, lr: LexRes, minify: Bool, ids: Bool) -> TRes:
   match lr:

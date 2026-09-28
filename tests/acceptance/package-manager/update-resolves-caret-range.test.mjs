@@ -63,3 +63,56 @@ test("update re-resolves a caret range to the highest matching version", async (
   assert.equal(imported.status, 0, imported.stderr);
   assert.equal(imported.stdout, "v1.2.0\n");
 });
+
+test("update refreshes an existing lock and materialized package", async (t) => {
+  const initialRegistry = startRegistry({
+    name: pkgName,
+    versions: [
+      { version: "1.0.0", files: pkgFiles("1.0.0", "v1.0.0") },
+    ],
+  });
+  const updatedRegistry = startRegistry({
+    name: pkgName,
+    versions: [
+      { version: "1.0.0", files: pkgFiles("1.0.0", "v1.0.0") },
+      { version: "1.2.0", files: pkgFiles("1.2.0", "v1.2.0") },
+      { version: "2.0.0", files: pkgFiles("2.0.0", "v2.0.0") },
+    ],
+  });
+  t.after(() => Promise.all([initialRegistry.close(), updatedRegistry.close()]));
+
+  const workspace = await makeWorkspace({
+    "package.json": JSON.stringify({
+      name: "app",
+      type: "module",
+      dependencies: {
+        [pkgName]: "^1.0.0",
+      },
+    }, null, 2),
+  });
+  t.after(() => removeWorkspace(workspace));
+
+  const installed = await runProcess(knot, ["install", "--registry", await initialRegistry.url()], {
+    cwd: workspace,
+    timeoutMs: 60_000,
+  });
+  assert.equal(installed.status, 0, installed.stderr);
+
+  const updated = await runProcess(knot, ["update", "--registry", await updatedRegistry.url()], {
+    cwd: workspace,
+    timeoutMs: 60_000,
+  });
+  assert.equal(updated.status, 0, updated.stderr);
+
+  const lock = await readFile(path.join(workspace, "knot.lock"), "utf8");
+  assert.match(lock, /version 1\.2\.0/);
+  assert.doesNotMatch(lock, /version 1\.0\.0/);
+
+  const imported = await runProcess(process.execPath, [
+    "--input-type=module",
+    "-e",
+    `import { hello } from "${pkgName}"; console.log(hello());`,
+  ], { cwd: workspace });
+  assert.equal(imported.status, 0, imported.stderr);
+  assert.equal(imported.stdout, "v1.2.0\n");
+});
