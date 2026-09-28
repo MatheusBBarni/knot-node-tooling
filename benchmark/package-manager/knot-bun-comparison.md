@@ -85,7 +85,7 @@ The project had no `knot.lock`, the registry metadata cache was removed, and the
 | After metadata pipeline optimization | 31 | 5.46 s | 5.4 s |
 
 The measured process wall time fell by about 72% in this run.
-The optimized resolver fetches up to sixteen independent metadata documents concurrently, requests compressed HTTPS responses with bounded retries, writes those responses directly to the metadata cache, and queries large cached packuments without converting the complete document into a Bend string.
+The optimized resolver fetches up to sixteen independent metadata documents concurrently, requests compressed HTTPS responses with bounded retries, atomically activates complete responses in the metadata cache, and queries large cached packuments without converting the complete document into a Bend string.
 It extracts the selected version object once so later policy and artifact queries operate on the bounded version record instead of repeatedly scanning the complete packument.
 
 The reported Bun run completed in 2.50 s and linked 29 packages.

@@ -77,28 +77,61 @@ static int http_parse(const char* url, char* host, size_t host_n, int* port,
 }
 
 static int https_get_file_curl(const char* url, const char* dest, int metadata) {
+  char temporary[4096];
+  const char* output = dest;
+  if (metadata) {
+    if (snprintf(temporary, sizeof(temporary), "%s.tmp.XXXXXX", dest) >= (int)sizeof(temporary)) {
+      errno = ENAMETOOLONG;
+      return -1;
+    }
+    int fd = mkstemp(temporary);
+    if (fd < 0) {
+      return -1;
+    }
+    if (close(fd) != 0) {
+      int saved = errno;
+      unlink(temporary);
+      errno = saved;
+      return -1;
+    }
+    output = temporary;
+  }
+
   pid_t pid = fork();
   if (pid < 0) {
-    return -1;
+    goto fail;
   }
   if (pid == 0) {
     if (metadata) {
-      execlp("curl", "curl", "-fsSL", "--compressed", "--retry", "2", "--retry-all-errors",
-        "--retry-delay", "0", "--retry-max-time", "60", "--connect-timeout", "10", "--max-time", "30", "-H",
-        "Accept: application/vnd.npm.install-v1+json", "-o", dest, url, (char*)0);
+      execlp("curl", "curl", "-fsSL", "--compressed", "--retry", "2", "--retry-connrefused",
+        "--retry-delay", "0", "--retry-max-time", "60", "--connect-timeout", "10", "--max-time", "30",
+        "--remove-on-error", "-H", "Accept: application/vnd.npm.install-v1+json",
+        "-o", output, url, (char*)0);
     } else {
-      execlp("curl", "curl", "-fsSL", "--max-time", "60", "-o", dest, url, (char*)0);
+      execlp("curl", "curl", "-fsSL", "--max-time", "60", "-o", output, url, (char*)0);
     }
     _exit(127);
   }
   int st = 0;
   if (waitpid(pid, &st, 0) < 0) {
-    return -1;
+    goto fail;
   }
   if (WIFEXITED(st) && WEXITSTATUS(st) == 0) {
-    return 0;
+    if (!metadata || rename(temporary, dest) == 0) {
+      return 0;
+    }
+    goto fail;
   }
   errno = EIO;
+
+fail:
+  {
+    int saved = errno;
+    if (metadata) {
+      unlink(temporary);
+    }
+    errno = saved;
+  }
   return -1;
 }
 

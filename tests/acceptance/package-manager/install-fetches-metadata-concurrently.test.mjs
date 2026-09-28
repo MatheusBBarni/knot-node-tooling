@@ -9,7 +9,7 @@ import { makeWorkspace, removeWorkspace } from "../../support/workspace.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const knot = process.env.KNOT ?? path.join(repoRoot, "bin/knot");
-const packageNames = Array.from({ length: 8 }, (_, index) => `knot-fixture-parallel-${index}`);
+const packageNames = Array.from({ length: 20 }, (_, index) => `knot-fixture-parallel-${index}`);
 
 test("install fetches independent registry metadata concurrently", async (t) => {
   const packages = new Map(packageNames.map((name, index) => {
@@ -98,6 +98,7 @@ test("install fetches independent registry metadata concurrently", async (t) => 
   });
   assert.equal(install.status, 0, install.stderr);
   assert.ok(maxMetadataInFlight > 1, `expected concurrent metadata requests, observed ${maxMetadataInFlight}`);
+  assert.ok(maxMetadataInFlight <= 16, `expected at most 16 concurrent metadata requests, observed ${maxMetadataInFlight}`);
 
   const imported = await runProcess(process.execPath, [
     "--input-type=module",
@@ -105,5 +106,5 @@ test("install fetches independent registry metadata concurrently", async (t) => 
     `const values = await Promise.all(${JSON.stringify(packageNames)}.map((name) => import(name).then((mod) => mod.default))); console.log(values.join(","));`,
   ], { cwd: workspace });
   assert.equal(imported.status, 0, imported.stderr);
-  assert.equal(imported.stdout, "0,1,2,3,4,5,6,7\n");
+  assert.equal(imported.stdout, "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19\n");
 });

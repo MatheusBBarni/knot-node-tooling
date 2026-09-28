@@ -26,7 +26,7 @@ static int https_get_curl(const char* url, char** out, size_t* n) {
       _exit(127);
     }
     close(fds[1]);
-    execlp("curl", "curl", "-fsSL", "--compressed", "--retry", "2", "--retry-all-errors",
+    execlp("curl", "curl", "-fsSL", "--compressed", "--retry", "2", "--retry-connrefused",
       "--retry-delay", "0", "--retry-max-time", "60", "--connect-timeout", "10", "--max-time", "30",
       "-H", "Accept: application/vnd.npm.install-v1+json", url, (char*)0);
     _exit(127);
