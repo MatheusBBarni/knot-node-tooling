@@ -1,3 +1,6 @@
+#include "data_json.h"
+#include "data_jsonc.h"
+
 // Json
 // ====
 
@@ -482,6 +485,23 @@ static int json_query(const char* text, const char* path, const char* mode,
   JsonP p;
   p.at = text;
   p.end = text + strlen(text);
+  if (strcmp(mode, "normalize_jsonc") == 0) {
+    size_t length = (size_t)(p.end - p.at);
+    if (out_n < length + 4) { errno = E2BIG; return -1; }
+    const char* error = knot_data_jsonc_normalize(text, out, length);
+    if (!error) error = knot_data_json_validate(out);
+    if (strcmp(error, "ok") != 0) {
+      snprintf(out, out_n, "ERR:%s", error);
+      return 0;
+    }
+    memmove(out + 3, out, length + 1);
+    memcpy(out, "OK\n", 3);
+    return 0;
+  }
+  if (strcmp(mode, "validate") == 0) {
+    snprintf(out, out_n, "%s", knot_data_json_validate(text));
+    return 0;
+  }
   p.err = 0;
   if (path[0] != 0 && !json_walk(&p, path)) {
     errno = ENOENT;
@@ -537,7 +557,8 @@ typedef struct {
 
 static void json_query_call(IoWork* w) {
   JsonQuery* g = (JsonQuery*)w->data;
-  io_sys_end(w, json_query(g->text, g->path, g->mode, g->out, 1 << 20));
+  io_sys_end(w, json_query(g->text, g->path, g->mode, g->out,
+    strcmp(g->mode, "normalize_jsonc") == 0 ? strlen(g->text) + 4 : 1 << 20));
 }
 
 static Term json_query_pack(Env e, IoWork* w) {
@@ -560,7 +581,7 @@ Term json_query_run(Env e, Term* f, IoWork* w) {
   g->text = io_cstr(e, f[0], &n1);
   g->path = io_cstr(e, f[1], &n2);
   g->mode = io_cstr(e, f[2], &n3);
-  g->out = io_mem(malloc(1 << 20));
+  g->out = io_mem(malloc(strcmp(g->mode, "normalize_jsonc") == 0 ? n1 + 4 : 1 << 20));
   g->out[0] = 0;
   w->data = (char*)g;
   if (io_nul(g->text, n1) || io_nul(g->path, n2) || io_nul(g->mode, n3)) {

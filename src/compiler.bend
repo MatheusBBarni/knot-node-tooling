@@ -258,15 +258,36 @@ def nat_sub(a: Nat, b: Nat) -> Nat:
     case 1n+p 1n+q:
       nat_sub(p, q)
 
+def js_path_existing(+file: String, js: Bool) -> String:
+  match js:
+    case True{}:
+      file
+    case False{}:
+      file ++ ".js"
+
 def js_path_if(+file: String, ts: Bool) -> String:
   match ts:
     case True{}:
       String.append(String.take(file, nat_sub(String.length(file), 2n)), "js")
     case False{}:
-      file ++ ".js"
+      js_path_existing(file, Bool.or(String.ends_with(file, ".js"), Bool.or(String.ends_with(file, ".mjs"), String.ends_with(file, ".cjs"))))
 
 def js_path_tsx(+file: String) -> String:
   String.append(String.take(file, nat_sub(String.length(file), 3n)), "js")
+
+def js_path_cts(+file: String, cts: Bool) -> String:
+  match cts:
+    case True{}:
+      String.take(file, nat_sub(String.length(file), 3n)) ++ "cjs"
+    case False{}:
+      js_path_if(file, String.ends_with(file, ".ts"))
+
+def js_path_mts(+file: String, mts: Bool) -> String:
+  match mts:
+    case True{}:
+      String.take(file, nat_sub(String.length(file), 3n)) ++ "mjs"
+    case False{}:
+      js_path_cts(file, String.ends_with(file, ".cts"))
 
 def js_path_go(+file: String, tsx: Bool, jsx: Bool) -> String:
   match tsx:
@@ -277,7 +298,7 @@ def js_path_go(+file: String, tsx: Bool, jsx: Bool) -> String:
         case True{}:
           js_path_tsx(file)
         case False{}:
-          js_path_if(file, String.ends_with(file, ".ts"))
+          js_path_mts(file, String.ends_with(file, ".mts"))
 
 def js_path(+file: String) -> String:
   js_path_go(file, String.ends_with(file, ".tsx"), String.ends_with(file, ".jsx"))

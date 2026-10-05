@@ -495,7 +495,7 @@ The build resolver must support:
 - Relative and absolute file imports.
 - Exact extensions and documented extension substitution.
 - Directory index files only where the selected resolution mode permits them.
-- `node_modules` lookup through the isolated `.bnpm` layout.
+- Installed package lookup through the isolated `node_modules/.knot` layout.
 - Workspace packages.
 - `package.json` exports and imports maps.
 - Import and require conditions.
@@ -510,6 +510,7 @@ Filesystem query results must be cached within a build generation.
 Negative lookups need invalidation in watch mode.
 
 The initial release must not fetch packages from the network.
+For bundled builds, the shared resolver's version 1 probing, condition-order, alias, workspace, and lockfile contracts are fixed in `bundler-prd.md` sections 10.6 and 23.1.1; the compiler does not invent a separate selection policy.
 
 ### 10.7 Graph scan
 
@@ -531,6 +532,7 @@ The graph must record:
 
 Non-literal dynamic imports and requires must remain runtime operations or fail under a strict option.
 The default behavior must be documented per target.
+For bundled builds, `bundler-prd.md` section 12.3 rejects non-literal dynamic imports and requires; no-bundle transpilation retains this section's separate target-runtime policy.
 
 ### 10.8 Binding and local transforms
 
@@ -1149,14 +1151,13 @@ Report parser time, resolver time, linker time, printer time, source-map time, I
 6. Should `bnpm transpile` preserve JSX by default or always produce JavaScript?
 7. What minimum Node.js version and browser baseline define supported output syntax?
 8. Should the first CommonJS output be bundled-only, or should no-bundle per-file CommonJS ship at the same time?
-9. How will package exports condition ordering be exposed and tested?
-10. Which source-map consumer defines column and name compatibility when consumers disagree?
-11. Should build caches be global, project-local, or split between reusable module transforms and project-linked outputs?
-12. Can the package manager store provide content digests directly to the compiler without re-hashing files?
-13. Which filesystem watcher APIs need a host adapter on macOS, Linux, and Windows?
-14. Is a WASI extension protocol practical with Bend2's released FFI and byte-buffer support?
-15. Which stages, if any, show a repeatable Metal or CUDA advantage after transfer costs?
-16. Should the broader suite retain `bnpm`, use a new umbrella name, or make `bnpm` only the package-management subcommand?
+9. Which source-map consumer defines column and name compatibility for no-bundle transpilation when consumers disagree?
+10. Should no-bundle caches be global or project-local alongside project-linked bundle caches?
+11. Can the package manager store provide content digests directly to the compiler without re-hashing files?
+12. Which filesystem watcher APIs need a host adapter on macOS, Linux, and Windows?
+13. Is a WASI extension protocol practical with Bend2's released FFI and byte-buffer support?
+14. Which stages, if any, show a repeatable Metal or CUDA advantage after transfer costs?
+15. Should the broader suite retain the historical working name or use `Knot` exclusively?
 
 ## 22. Release criteria
 

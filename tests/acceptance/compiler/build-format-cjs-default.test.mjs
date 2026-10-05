@@ -17,6 +17,8 @@ test("build --format cjs exposes default exports", async (t) => {
   const result = await runProcess(knot, [
     "build",
     "entry.ts",
+    "--target",
+    "node",
     "--format",
     "cjs",
     "--outfile",

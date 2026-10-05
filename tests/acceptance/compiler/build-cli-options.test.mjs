@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { runProcess } from "../../support/process.mjs";
@@ -55,6 +55,16 @@ test("build applies target, naming, define, drop, and write options", async (t) 
   assert.equal(await exists(path.join(workspace, "discarded")), false);
 });
 
+test("build rejects an invalid write mode before publication", async (t) => {
+  const workspace = await makeWorkspace({ "entry.ts": "export const value = 1;\n" });
+  t.after(() => removeWorkspace(workspace));
+
+  const result = await runProcess(knot, ["build", "entry.ts", "--outdir", "dist", "--write=perhaps"], { cwd: workspace });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /invalid_option/);
+  assert.equal(await exists(path.join(workspace, "dist")), false);
+});
+
 test("build applies a custom text loader", async (t) => {
   const workspace = await makeWorkspace({
     "package.json": JSON.stringify({ name: "app", type: "module" }),
@@ -63,24 +73,34 @@ test("build applies a custom text loader", async (t) => {
   });
   t.after(() => removeWorkspace(workspace));
 
-  const result = await runProcess(knot, ["build", "entry.ts", "--outdir", "dist", "--loader", ".foo=text"], { cwd: workspace });
+  const args = ["build", "entry.ts", "--outdir", "dist", "--loader", ".foo=text"];
+  const result = await runProcess(knot, args, { cwd: workspace });
   assert.equal(result.status, 0, result.stderr);
-  const js = await readFile(path.join(workspace, "dist/entry.js"), "utf8");
-  assert.match(js, /hello from loader/);
+  const run = await runProcess(process.execPath, [path.join(workspace, "dist/entry.js")], { cwd: workspace });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.stdout, "hello from loader\n\n");
+  const before = await readFile(path.join(workspace, "dist/entry.js"), "utf8");
+  await writeFile(path.join(workspace, "data.foo"), Buffer.from([255]));
+  const invalid = await runProcess(knot, args, { cwd: workspace });
+  assert.notEqual(invalid.status, 0);
+  assert.match(invalid.stderr, /invalid_encoding/);
+  assert.equal(await readFile(path.join(workspace, "dist/entry.js"), "utf8"), before);
 });
 
 test("build applies a custom JSON loader", async (t) => {
   const workspace = await makeWorkspace({
     "package.json": JSON.stringify({ name: "app", type: "module" }),
-    "entry.ts": 'import value from "./data.foo";\nconsole.log(value.answer);\n',
+    "entry.ts": 'import value from "./data.foo";\nimport { plusOne } from "./helper.ts";\nconsole.log(plusOne(value.answer));\n',
+    "helper.ts": "export function plusOne(value) { return value + 1; }\n",
     "data.foo": "{\"answer\":7}\n",
   });
   t.after(() => removeWorkspace(workspace));
 
   const result = await runProcess(knot, ["build", "entry.ts", "--outdir", "dist", "--loader", ".foo=json"], { cwd: workspace });
   assert.equal(result.status, 0, result.stderr);
-  const js = await readFile(path.join(workspace, "dist/entry.js"), "utf8");
-  assert.match(js, /answer/);
+  const run = await runProcess(process.execPath, [path.join(workspace, "dist/entry.js")], { cwd: workspace });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.stdout, "8\n");
 });
 
 test("build preserves an external import without duplicating same-line code", async (t) => {

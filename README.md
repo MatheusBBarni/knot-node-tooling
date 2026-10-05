@@ -170,8 +170,12 @@ The current JavaScript build path can:
 - Write JSON build metadata with `--metafile`.
 - Reuse unchanged outputs through `.knot/build-cache/v1`.
 - Rebuild affected inputs with `--watch`.
+- Keep path-like external dynamic imports lazy when their targets are separately emitted entries.
+- Emit `.mjs` or `.cjs` by default for Node.js targets and validate the package scope of an explicitly named `.js` entry.
+- Inspect a redacted semantic build digest with `knot build <entry> --show-config`.
+- Select a limited declarative `[build.<name>]` profile for target, format, output directory, and minification with `--profile <name>`; explicit CLI values override it.
 
-Basic CSS extraction, HTML module-entry rewriting, JSON/text modules, and static-asset copying are available in the current bundler slice.
+Basic CSS extraction, HTML module-entry rewriting, JSON/JSONC/TOML/YAML/text modules, and static-asset copying are available in the current bundler slice.
 Full CSS transforms, standards-aware HTML reference rewriting, and production asset naming remain in progress.
 
 Builds do not install packages or access the network implicitly.

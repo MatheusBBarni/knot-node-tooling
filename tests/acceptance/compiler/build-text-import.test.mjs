@@ -26,3 +26,16 @@ test("build loads text modules as default strings", async (t) => {
   assert.equal(run.status, 0, run.stderr);
   assert.equal(run.stdout, "hello knot\n");
 });
+
+test("text loader strips only an initial UTF-8 BOM", async (t) => {
+  const workspace = await makeWorkspace({
+    "message.txt": "\uFEFFhello\uFEFFworld",
+    "entry.ts": 'import message from "./message.txt";\nconsole.log(message === "hello\\uFEFFworld");\n',
+  });
+  t.after(() => removeWorkspace(workspace));
+  const result = await runProcess(knot, ["build", "entry.ts", "--outdir", "dist"], { cwd: workspace });
+  assert.equal(result.status, 0, result.stderr);
+  const executed = await runProcess(process.execPath, ["dist/entry.js"], { cwd: workspace });
+  assert.equal(executed.status, 0, executed.stderr);
+  assert.equal(executed.stdout, "true\n");
+});

@@ -15,5 +15,57 @@
   },
   "node": {
     "major": 24
+  },
+  "chromium": {
+    "version": "153.0.8010.12",
+    "revision": "1681091",
+    "metadata": "https://googlechromelabs.github.io/chrome-for-testing/153.0.8010.12.json",
+    "artifacts": {
+      "darwin-arm64": {
+        "url": "https://storage.googleapis.com/chrome-for-testing-public/153.0.8010.12/mac-arm64/chrome-mac-arm64.zip",
+        "sha256": "930e2a2c15addbaca1fe9b07bfa520667bced556d7988707186819cb4279ef3b"
+      },
+      "linux-x64": {
+        "url": "https://storage.googleapis.com/chrome-for-testing-public/153.0.8010.12/linux64/chrome-linux64.zip",
+        "sha256": "8aac35011c18f6e2d10696154af89a5728ac2ddd6dc6fad24ffdf243c3fcfd5a"
+      },
+      "windows-x64": {
+        "url": "https://storage.googleapis.com/chrome-for-testing-public/153.0.8010.12/win64/chrome-win64.zip",
+        "sha256": "415968b02065d4a9e2c10b85f0ae9f489b8fba500e94d9d0a7b7c4852a7234c1"
+      }
+    }
+  },
+  "nativeCompiler": {
+    "family": "clang",
+    "version": "21.1.8",
+    "source": {
+      "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/llvm-project-21.1.8.src.tar.xz",
+      "sha256": "4633a23617fa31a3ea51242586ea7fb1da7140e426bd62fc164261fe036aa142"
+    }
+  },
+  "compatibility": {
+    "bun": {
+      "version": "1.4.2",
+      "artifacts": {
+        "darwin-arm64": {
+          "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-darwin-aarch64.zip",
+          "sha256": "90987a3a16d7db556d886ac3d551e7b6d3edf0a1cf43acaed622e8676be1d12f"
+        },
+        "linux-x64": {
+          "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-linux-x64.zip",
+          "sha256": "36368faef7527875d5ffa52e53cd48021741f2a83eb6208a8dd64068d422a913"
+        }
+      }
+    },
+    "esbuild": {
+      "version": "0.28.2",
+      "package": "https://registry.npmjs.org/esbuild/-/esbuild-0.28.2.tgz",
+      "integrity": "sha512-HKVLS8dvII+xoKW9kmqxbRKrnWEXfJJr/FZhhJmiqIB0e053QNYFqOBouTMO/k5sID4MvCiUCvv8b9M4h32wIA=="
+    },
+    "rollup": {
+      "version": "4.63.5",
+      "package": "https://registry.npmjs.org/rollup/-/rollup-4.63.5.tgz",
+      "integrity": "sha512-KRWwmNLlPw5M7HcdYfm15oBv9n9LPtjzpzCIxS/phwqvPyxHSoKX6Y2YU3pxSPfy0CLquVgsx/j/hBi6OvH1Nw=="
+    }
   }
 }
