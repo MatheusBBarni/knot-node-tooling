@@ -4,12 +4,14 @@ import path from "node:path";
 import test from "node:test";
 import { runProcess } from "../../support/process.mjs";
 import { makeWorkspace, removeWorkspace } from "../../support/workspace.mjs";
+import { KnotTestHome } from "../../support/home.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const knot = process.env.KNOT ?? path.join(repoRoot, "bin/knot");
 const pkgName = "knot-fixture-hello";
 
 test("install fails once when the registry returns 401", async (t) => {
+  const home = await KnotTestHome.create(t);
   let gets = 0;
   const server = http.createServer((_req, res) => {
     gets += 1;
@@ -43,6 +45,7 @@ test("install fails once when the registry returns 401", async (t) => {
 
   const install = await runProcess(knot, ["install", "--registry", registryUrl], {
     cwd: workspace,
+    env: KnotTestHome.env(home),
     timeoutMs: 60_000,
   });
   assert.notEqual(install.status, 0);

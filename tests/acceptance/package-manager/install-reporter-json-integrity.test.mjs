@@ -4,12 +4,14 @@ import test from "node:test";
 import { runProcess } from "../../support/process.mjs";
 import { startRegistry } from "../../support/registry.mjs";
 import { makeWorkspace, removeWorkspace } from "../../support/workspace.mjs";
+import { KnotTestHome } from "../../support/home.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const knot = process.env.KNOT ?? path.join(repoRoot, "bin/knot");
 const pkgName = "knot-fixture-hello";
 
 test("install --reporter json emits an integrity_mismatch event", async (t) => {
+  const home = await KnotTestHome.create(t);
   const registry = startRegistry({
     name: pkgName,
     version: "1.0.0",
@@ -46,6 +48,7 @@ test("install --reporter json emits an integrity_mismatch event", async (t) => {
     registryUrl,
   ], {
     cwd: workspace,
+    env: KnotTestHome.env(home),
     timeoutMs: 60_000,
   });
   assert.notEqual(install.status, 0);

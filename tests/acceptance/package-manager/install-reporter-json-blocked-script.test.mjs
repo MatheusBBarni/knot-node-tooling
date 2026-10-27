@@ -4,12 +4,14 @@ import test from "node:test";
 import { runProcess } from "../../support/process.mjs";
 import { startRegistry } from "../../support/registry.mjs";
 import { makeWorkspace, removeWorkspace } from "../../support/workspace.mjs";
+import { KnotTestHome } from "../../support/home.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const knot = process.env.KNOT ?? path.join(repoRoot, "bin/knot");
 const pkgName = "knot-fixture-hello";
 
 test("install --reporter json emits blocked_script when a preinstall is denied", async (t) => {
+  const home = await KnotTestHome.create(t);
   const registry = startRegistry({
     name: pkgName,
     version: "1.0.0",
@@ -48,6 +50,7 @@ test("install --reporter json emits blocked_script when a preinstall is denied",
     registryUrl,
   ], {
     cwd: workspace,
+    env: KnotTestHome.env(home),
     timeoutMs: 60_000,
   });
   assert.equal(install.status, 0, install.stderr);

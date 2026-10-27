@@ -5,6 +5,7 @@ import test from "node:test";
 import { npmTarball, sriSha512 } from "../../support/registry.mjs";
 import { runProcess } from "../../support/process.mjs";
 import { makeWorkspace, removeWorkspace } from "../../support/workspace.mjs";
+import { KnotTestHome } from "../../support/home.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const knot = process.env.KNOT ?? path.join(repoRoot, "bin/knot");
@@ -12,6 +13,7 @@ const pkgName = "knot-fixture-hello";
 const token = "knot-scoped-npmrc-token";
 
 test("install sends host-scoped _authToken from project .npmrc", async (t) => {
+  const home = await KnotTestHome.create(t);
   const tar = npmTarball({
     "package.json": JSON.stringify({
       name: pkgName,
@@ -103,7 +105,7 @@ test("install sends host-scoped _authToken from project .npmrc", async (t) => {
   const install = await runProcess(knot, ["install", "--registry", registryUrl], {
     cwd: workspace,
     timeoutMs: 60_000,
-    env,
+    env: KnotTestHome.env(home, env),
   });
   assert.equal(install.status, 0, install.stderr);
   assert.equal(sawBearer, true);

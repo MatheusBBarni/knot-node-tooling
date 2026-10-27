@@ -5,6 +5,7 @@ import test from "node:test";
 import { npmTarball, sriSha512 } from "../../support/registry.mjs";
 import { runProcess } from "../../support/process.mjs";
 import { makeWorkspace, removeWorkspace } from "../../support/workspace.mjs";
+import { KnotTestHome } from "../../support/home.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const knot = process.env.KNOT ?? path.join(repoRoot, "bin/knot");
@@ -12,6 +13,7 @@ const pkgName = "knot-fixture-hello";
 const token = "npm-ci-token";
 
 test("install sends NPM_TOKEN as a bearer header and lets Node.js import the package", async (t) => {
+  const home = await KnotTestHome.create(t);
   const tar = npmTarball({
     "package.json": JSON.stringify({
       name: pkgName,
@@ -102,7 +104,7 @@ test("install sends NPM_TOKEN as a bearer header and lets Node.js import the pac
   const install = await runProcess(knot, ["install", "--registry", registryUrl], {
     cwd: workspace,
     timeoutMs: 60_000,
-    env,
+    env: KnotTestHome.env(home, env),
   });
   assert.equal(install.status, 0, install.stderr);
   assert.equal(sawBearer, true);

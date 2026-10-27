@@ -5,12 +5,14 @@ import test from "node:test";
 import { runProcess } from "../../support/process.mjs";
 import { startRegistry } from "../../support/registry.mjs";
 import { makeWorkspace, removeWorkspace } from "../../support/workspace.mjs";
+import { KnotTestHome } from "../../support/home.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const knot = process.env.KNOT ?? path.join(repoRoot, "bin/knot");
 const pkgName = "knot-fixture-hello";
 
 test("install --store-dir writes verified tarballs to the custom store", async (t) => {
+  const home = await KnotTestHome.create(t);
   const registry = startRegistry({
     name: pkgName,
     version: "1.0.0",
@@ -47,13 +49,14 @@ test("install --store-dir writes verified tarballs to the custom store", async (
     registryUrl,
   ], {
     cwd: workspace,
+    env: KnotTestHome.env(home),
     timeoutMs: 60_000,
   });
   assert.equal(install.status, 0, install.stderr);
   assert.equal(existsSync(path.join(workspace, ".knot", "cas")), false);
   assert.ok(readdirSync(storeDir).length > 0);
 
-  const listed = await runProcess(knot, ["store", "path"], { cwd: workspace });
+  const listed = await runProcess(knot, ["store", "path"], { cwd: workspace, env: KnotTestHome.env(home) });
   assert.equal(listed.status, 0, listed.stderr);
   assert.equal(listed.stdout, storeDir + "\n");
 

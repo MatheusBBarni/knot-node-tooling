@@ -5,6 +5,7 @@ import test from "node:test";
 import { runProcess } from "../../support/process.mjs";
 import { startRegistry } from "../../support/registry.mjs";
 import { makeWorkspace, removeWorkspace } from "../../support/workspace.mjs";
+import { KnotTestHome } from "../../support/home.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const knot = process.env.KNOT ?? path.join(repoRoot, "bin/knot");
@@ -23,6 +24,7 @@ function pkgFiles(version, greeting) {
 }
 
 test("update re-resolves a caret range to the highest matching version", async (t) => {
+  const home = await KnotTestHome.create(t);
   const registry = startRegistry({
     name: pkgName,
     versions: [
@@ -47,6 +49,7 @@ test("update re-resolves a caret range to the highest matching version", async (
 
   const updated = await runProcess(knot, ["update", "--registry", registryUrl], {
     cwd: workspace,
+    env: KnotTestHome.env(home),
     timeoutMs: 60_000,
   });
   assert.equal(updated.status, 0, updated.stderr);
@@ -65,6 +68,7 @@ test("update re-resolves a caret range to the highest matching version", async (
 });
 
 test("update refreshes an existing lock and materialized package", async (t) => {
+  const home = await KnotTestHome.create(t);
   const initialRegistry = startRegistry({
     name: pkgName,
     versions: [
@@ -94,12 +98,14 @@ test("update refreshes an existing lock and materialized package", async (t) => 
 
   const installed = await runProcess(knot, ["install", "--registry", await initialRegistry.url()], {
     cwd: workspace,
+    env: KnotTestHome.env(home),
     timeoutMs: 60_000,
   });
   assert.equal(installed.status, 0, installed.stderr);
 
   const updated = await runProcess(knot, ["update", "--registry", await updatedRegistry.url()], {
     cwd: workspace,
+    env: KnotTestHome.env(home),
     timeoutMs: 60_000,
   });
   assert.equal(updated.status, 0, updated.stderr);

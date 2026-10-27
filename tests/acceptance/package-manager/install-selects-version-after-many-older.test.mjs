@@ -5,12 +5,14 @@ import test from "node:test";
 import { npmTarball, sriSha512 } from "../../support/registry.mjs";
 import { runProcess } from "../../support/process.mjs";
 import { makeWorkspace, removeWorkspace } from "../../support/workspace.mjs";
+import { KnotTestHome } from "../../support/home.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const knot = process.env.KNOT ?? path.join(repoRoot, "bin/knot");
 const pkgName = "knot-fixture-hello";
 
 test("install selects a matching version published after many older releases", async (t) => {
+  const home = await KnotTestHome.create(t);
   const tar = npmTarball({
     "package.json": JSON.stringify({
       name: pkgName,
@@ -99,6 +101,7 @@ test("install selects a matching version published after many older releases", a
 
   const install = await runProcess(knot, ["install", "--registry", registryUrl], {
     cwd: workspace,
+    env: KnotTestHome.env(home),
     timeoutMs: 60_000,
   });
   assert.equal(install.status, 0, install.stderr);

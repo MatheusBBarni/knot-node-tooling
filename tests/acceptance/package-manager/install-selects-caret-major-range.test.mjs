@@ -5,6 +5,7 @@ import test from "node:test";
 import { runProcess } from "../../support/process.mjs";
 import { startRegistry } from "../../support/registry.mjs";
 import { makeWorkspace, removeWorkspace } from "../../support/workspace.mjs";
+import { KnotTestHome } from "../../support/home.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const knot = process.env.KNOT ?? path.join(repoRoot, "bin/knot");
@@ -23,6 +24,7 @@ function pkgFiles(version, greeting) {
 }
 
 test("install selects the highest version that satisfies a major-only caret range", async (t) => {
+  const home = await KnotTestHome.create(t);
   const registry = startRegistry({
     name: pkgName,
     versions: [
@@ -48,6 +50,7 @@ test("install selects the highest version that satisfies a major-only caret rang
 
   const install = await runProcess(knot, ["install", "--registry", registryUrl], {
     cwd: workspace,
+    env: KnotTestHome.env(home),
     timeoutMs: 60_000,
   });
   assert.equal(install.status, 0, install.stderr);
