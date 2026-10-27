@@ -34,7 +34,7 @@ static int knot_limit_parse(const char* spec, size_t* depth, size_t* nodes) {
 static Term data_limits_pack(Env env, IoWork* work) {
   int code = work->code;
   free(work->data);
-  return code ? io_fail(env, code, NULL) : io_done(env, term_pak(CID_UNIT, 0));
+  return code ? io_fail(env, code, NULL) : io_done(env, term_pak(CID_Unit, 0));
 }
 
 static void data_limits_call(IoWork* work) {
@@ -61,5 +61,5 @@ Term data_limits_run(Env env, Term* args, IoWork* work) {
 }
 
 static void __attribute__((constructor)) data_limits_use(void) {
-  io_eff(CID_DATA_LIMITS, data_limits_run, 0);
+  io_eff(CID_Data_limits, data_limits_run);
 }

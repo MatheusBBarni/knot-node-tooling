@@ -47,5 +47,5 @@ Term fs_cwd_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) fs_cwd_use(void) {
-  io_eff(CID_FS_CWD, fs_cwd_run, 0);
+  io_eff(CID_Fs_cwd, fs_cwd_run);
 }

@@ -96,5 +96,5 @@ Term pkg_file_side_effects_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) pkg_file_side_effects_use(void) {
-  io_eff(CID_PKG_FILE_SIDE_EFFECTS, pkg_file_side_effects_run, 0);
+  io_eff(CID_Pkg_file_side_effects, pkg_file_side_effects_run);
 }

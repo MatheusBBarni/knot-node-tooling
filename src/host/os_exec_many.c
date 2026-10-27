@@ -91,5 +91,5 @@ Term os_exec_many_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) os_exec_many_use(void) {
-  io_eff(CID_OS_EXEC_MANY, os_exec_many_run, 0);
+  io_eff(CID_Os_exec_many, os_exec_many_run);
 }

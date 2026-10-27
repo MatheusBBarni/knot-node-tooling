@@ -37,5 +37,5 @@ Term fs_regular_file_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) fs_regular_file_use(void) {
-  io_eff(CID_FS_REGULAR_FILE, fs_regular_file_run, 0);
+  io_eff(CID_Fs_regular_file, fs_regular_file_run);
 }

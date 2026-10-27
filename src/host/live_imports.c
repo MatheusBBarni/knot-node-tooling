@@ -229,5 +229,5 @@ Term live_imports_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) live_imports_use(void) {
-  io_eff(CID_LIVE_IMPORTS, live_imports_run, 0);
+  io_eff(CID_Live_imports, live_imports_run);
 }

@@ -23,5 +23,5 @@ Term os_arch_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) os_arch_use(void) {
-  io_eff(CID_OS_ARCH, os_arch_run, 0);
+  io_eff(CID_Os_arch, os_arch_run);
 }

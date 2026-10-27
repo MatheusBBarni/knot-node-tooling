@@ -5,6 +5,7 @@ import test from "node:test";
 import { runProcess } from "../../support/process.mjs";
 import { startRegistry } from "../../support/registry.mjs";
 import { makeWorkspace, removeWorkspace } from "../../support/workspace.mjs";
+import { KnotTestHome } from "../../support/home.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const knot = process.env.KNOT ?? path.join(repoRoot, "bin/knot");
@@ -12,6 +13,7 @@ const pkgName = "knot-fixture-hello";
 const probe = "knot-traversal-probe.js";
 
 test("install rejects a tarball whose paths escape the extract root", async (t) => {
+  const home = await KnotTestHome.create(t);
   const registry = startRegistry({
     name: pkgName,
     version: "1.0.0",
@@ -42,6 +44,7 @@ test("install rejects a tarball whose paths escape the extract root", async (t) 
 
   const install = await runProcess(knot, ["install", "--registry", registryUrl], {
     cwd: workspace,
+    env: KnotTestHome.env(home),
     timeoutMs: 60_000,
   });
   assert.notEqual(install.status, 0);

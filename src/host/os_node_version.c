@@ -36,5 +36,5 @@ Term os_node_version_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) os_node_version_use(void) {
-  io_eff(CID_OS_NODE_VERSION, os_node_version_run, 0);
+  io_eff(CID_Os_node_version, os_node_version_run);
 }

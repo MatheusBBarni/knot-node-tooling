@@ -22,25 +22,56 @@ def http_body.go(s: String, e: Bool, w: U32) -> String:
 def http_body(s: String) -> String:
   http_body.go(s, False{}, 0)
 
-def fetch_tail(head: String, m: Socket & Result<&1, &1, U32 & String, String>) -> IO(String):
+def http_send_result(r: Result<&1, &1, (U32 & String) & List<&2, U32>, Unit>) ->
+  Result<&1, &1, U32 & String, Unit>:
+  match r:
+    case Done{value}:
+      Done{value}
+    case Fail{((code, message), _)}:
+      Fail{(code, message)}
+
+def http_tail_body(+head: String, tail: Maybe<&1, String>) -> String:
+  match tail:
+    case None{}:
+      head
+    case Some{part}:
+      head ++ part
+
+def fetch_tail(+head: String, m: Socket & Result<&1, &1, U32 & String, Maybe<&1, String>>) -> IO(String):
   (s, r) = m
   do IO<String>:
-    tail : String <- IO.pass(String, r)
+    tail : Maybe<&1, String> <- IO.pass(Maybe<&1, String>, r)
     Socket.close(s)
-    return head ++ tail
+    return http_tail_body(head, tail)
 
-def fetch_head(m: Socket & Result<&1, &1, U32 & String, String>) -> IO(String):
+def fetch_head_value(s: Socket, first: Maybe<&1, String>) -> IO(String):
+  match first:
+    case None{}:
+      do IO<String>:
+        Socket.close(s)
+        IO.die(String, 1, "knot: registry closed before HTTP response")
+    case Some{head}:
+      do IO<String>:
+        rest : Socket & Result<&1, &1, U32 & String, Maybe<&1, String>> <- TCP.recv(s, 65535)
+        fetch_tail(head, rest)
+
+def fetch_head_result(s: Socket, r: Result<&1, &1, U32 & String, Maybe<&1, String>>) -> IO(String):
+  match r:
+    case Fail{err}:
+      IO.pass(String, Fail{err})
+    case Done{value}:
+      fetch_head_value(s, value)
+
+def fetch_head(m: Socket & Result<&1, &1, U32 & String, Maybe<&1, String>>) -> IO(String):
+  (s, r) = m
+  fetch_head_result(s, r)
+
+
+def fetch_sent(m: Socket & Result<&1, &1, (U32 & String) & List<&2, U32>, Unit>) -> IO(String):
   (s, r) = m
   do IO<String>:
-    head : String <- IO.pass(String, r)
-    rest : Socket & Result<&1, &1, U32 & String, String> <- TCP.recv(s, 65535)
-    fetch_tail(head, rest)
-
-def fetch_sent(m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(String):
-  (s, r) = m
-  do IO<String>:
-    IO.pass(Unit, r)
-    read : Socket & Result<&1, &1, U32 & String, String> <- TCP.recv(s, 65535)
+    sent : Unit <- IO.pass(Unit, http_send_result(r))
+    read : Socket & Result<&1, &1, U32 & String, Maybe<&1, String>> <- TCP.recv(s, 65535)
     fetch_head(read)
 
 def extra_line(+extra: String) -> String:
@@ -91,7 +122,7 @@ def http_get_port(+host: String, +port_s: String, path: String, port_m: Maybe<&2
     case Some{port}:
       do IO<String>:
         c : Socket <- IO.try(Socket, TCP.connect(host, port))
-        sent : Socket & Result<&1, &1, U32 & String, Unit> <- TCP.send(c, http_request(host, port_s, path, etag))
+        sent : Socket & Result<&1, &1, (U32 & String) & List<&2, U32>, Unit> <- TCP.send(c, http_request(host, port_s, path, etag))
         fetch_sent(sent)
 
 def http_get_open(+host: String, +port_s: String, path: String, +etag: String) -> IO(String):

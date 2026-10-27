@@ -2499,8 +2499,8 @@ Benchmarks run only after the relevant correctness suite is green.
 Each report records the toolchain version, backend, hardware, target, format, entries, graph shape, source-map mode, minification settings, cache state, storage medium, worker count, and GPU transfer time.
 Performance claims without byte-equivalence and runtime-equivalence evidence are invalid.
 
-`toolchain.json` pins Bend 2.0.24 with platform archives, Node major 24, Chromium 153.0.8010.12 with darwin-arm64/linux-x64/windows-x64 archive digests, LLVM Clang 21.1.8 source identity, and exact Bun 1.4.2, esbuild 0.28.2, and Rollup 4.63.5 reference versions.
-The Chromium archive digests were computed from the versioned official downloads; the compiler source pin does not by itself freeze the installed compiler binary or CI image, and npm package wrappers do not pin all native optional binary packages.
+`toolchain.json` pins Bend 2.0.39 with platform archives, Node major 24, Chromium 153.0.8010.12 with darwin-arm64/linux-x64/windows-x64 archive digests, LLVM Clang 21.1.8 source identity, and exact Bun 1.4.2, esbuild 0.28.2, and Rollup 4.63.5 reference versions.
+The Chromium and Bend archive hashes pin the downloaded artifacts, not the CI host image, installed Clang/linker, or optional native reference packages.
 Before comparative release jobs, freeze each CI host image, installed Clang binary and linker provenance, optional native reference packages, and exact reference commands; do not silently use host `clang`, browser, or global tools.
 A missing required compiler, browser, compatibility tool, or fixture is an infrastructure failure, never a skipped passing gate.
 The planned release fixture entry point is Node.js 24 `node --test tests/acceptance/bundler/` using the actual `knot` process and deterministic fixtures under `tests/fixtures/bundler/`; those paths must be created before the release command is claimed as runnable.
@@ -2520,7 +2520,7 @@ The release CI matrix is:
 
 | Gate | Host and backend | Required evidence |
 | --- | --- | --- |
-| Pull request fast | Ubuntu 24.04 linux-x64 image, CPU, Node 24, Bend 2.0.24, Clang 21.1.8 | CLI, schema, cache, loader, security, and deterministic CPU fixtures. |
+| Pull request fast | Ubuntu 24.04 linux-x64 image, CPU, Node 24, Bend 2.0.39, Clang 21.1.8 | CLI, schema, cache, loader, security, and deterministic CPU fixtures. |
 | Merge full web | Ubuntu 24.04 linux-x64 and macOS 15 darwin-arm64 images, CPU, pinned Chromium | Node runtime plus real HTTP browser CSS/HTML/map/preload and watch/recovery fixtures. |
 | Merge Windows publication | Windows Server 2022 windows-x64 image with a verified native Knot binary and pinned Chromium | Pointer-aware consumer, ACL, symlink/reparse, cancellation, and multi-crash recovery fixtures; absent native build support is infrastructure failure. |
 | Optional backend equivalence | macOS 15 Metal host or Ubuntu 24.04 CUDA host when supported | CPU versus device byte-equivalent artifacts, maps, manifest, and semantic metafile projection. |

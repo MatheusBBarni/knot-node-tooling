@@ -28,7 +28,7 @@ It brings package management, TypeScript transformation, bundling, and testing u
 > Package management, TypeScript transformation, graph analysis, and an initial JavaScript build path run in this tree.
 > The test runner is still planned.
 > Transpilation does not type-check or emit `.d.ts` files.
-> The pinned toolchain is Bend 2.0.24 in [`toolchain.json`](./toolchain.json).
+> The pinned toolchain is Bend 2.0.39 in [`toolchain.json`](./toolchain.json).
 
 ## Overview
 
@@ -101,7 +101,7 @@ pnpm add --global @matheusbbarni/knot
 ### Prerequisites
 
 - Node.js 24 LTS.
-- Bend 2.0.24 installed from the verified pin in [`toolchain.json`](./toolchain.json).
+- Bend 2.0.39 installed from the verified pin in [`toolchain.json`](./toolchain.json).
 - A native C compiler supported by Bend2.
 - On the current macOS development setup, the build wrapper uses Homebrew LLVM and LLD through [`scripts/cc`](./scripts/cc).
 

@@ -117,5 +117,5 @@ Term https_get_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) https_get_use(void) {
-  io_eff(CID_HTTPS_GET, https_get_run, 0);
+  io_eff(CID_http_Https_get, https_get_run);
 }

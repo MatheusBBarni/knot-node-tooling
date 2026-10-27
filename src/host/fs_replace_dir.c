@@ -116,7 +116,7 @@ static void fs_replace_dir_call(IoWork* w) {
 static Term fs_replace_dir_pack(Env e, IoWork* w) {
   FsReplaceDir* g = (FsReplaceDir*)w->data;
   Term r = w->code != 0 ? io_fail(e, w->code, NULL)
-    : io_done(e, term_pak(CID_UNIT, 0));
+    : io_done(e, term_pak(CID_Unit, 0));
   free(g->src);
   free(g->dst);
   free(g);
@@ -138,5 +138,5 @@ Term fs_replace_dir_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) fs_replace_dir_use(void) {
-  io_eff(CID_FS_REPLACE_DIR, fs_replace_dir_run, 0);
+  io_eff(CID_Fs_replace_dir, fs_replace_dir_run);
 }

@@ -266,7 +266,7 @@ static void tar_extract_call(IoWork* w) {
 static Term tar_extract_pack(Env e, IoWork* w) {
   TarExtract* g = (TarExtract*)w->data;
   Term r = w->code != 0 ? io_fail(e, w->code, NULL)
-    : io_done(e, term_pak(CID_UNIT, 0));
+    : io_done(e, term_pak(CID_Unit, 0));
   free(g->archive);
   free(g->dest);
   free(g);
@@ -288,5 +288,5 @@ Term tar_extract_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) tar_extract_use(void) {
-  io_eff(CID_TAR_EXTRACT, tar_extract_run, 0);
+  io_eff(CID_Tar_extract, tar_extract_run);
 }

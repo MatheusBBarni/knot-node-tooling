@@ -1126,7 +1126,7 @@ static void knot_serve_call(IoWork* w) {
 
 static Term knot_serve_pack(Env e, IoWork* w) {
   KnotServeRun* run = (KnotServeRun*)w->data;
-  Term result = io_done(e, term_pak(CID_UNIT, 0));
+  Term result = io_done(e, term_pak(CID_Unit, 0));
   free(run->root);
   free(run->entry);
   free(run);
@@ -1154,5 +1154,5 @@ Term server_run_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) server_run_use(void) {
-  io_eff(CID_SERVER_RUN, server_run_run, 0);
+  io_eff(CID_Server_run, server_run_run);
 }

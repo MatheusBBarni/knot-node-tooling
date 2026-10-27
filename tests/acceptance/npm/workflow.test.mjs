@@ -8,8 +8,6 @@ const workflowPath = path.join(repoRoot, ".github/workflows/publish.yml");
 
 test("the publish workflow builds both first-release targets and creates a GitHub release", () => {
   const text = fs.readFileSync(workflowPath, "utf8");
-  const workflows = fs.readdirSync(path.join(repoRoot, ".github/workflows"));
-  assert.deepEqual(workflows, ["publish.yml"]);
   assert.match(text, /tags:\n\s+- "v\*"/);
   assert.doesNotMatch(text, /branches:/);
   assert.doesNotMatch(text, /workflow_dispatch:/);

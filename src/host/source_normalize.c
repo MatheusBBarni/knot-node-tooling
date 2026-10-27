@@ -204,5 +204,5 @@ Term source_normalize_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) source_normalize_use(void) {
-  io_eff(CID_SOURCE_NORMALIZE, source_normalize_run, 0);
+  io_eff(CID_Source_normalize, source_normalize_run);
 }

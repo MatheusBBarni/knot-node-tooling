@@ -46,5 +46,5 @@ Term pkg_exports_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) pkg_exports_use(void) {
-  io_eff(CID_PKG_EXPORTS, pkg_exports_run, 0);
+  io_eff(CID_Pkg_exports, pkg_exports_run);
 }

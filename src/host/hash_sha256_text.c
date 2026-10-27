@@ -35,5 +35,5 @@ Term hash_sha256_text_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) hash_sha256_text_use(void) {
-  io_eff(CID_HASH_SHA256_TEXT, hash_sha256_text_run, 0);
+  io_eff(CID_Hash_sha256_text, hash_sha256_text_run);
 }

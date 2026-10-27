@@ -129,5 +129,5 @@ Term syntax_validate_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) syntax_validate_use(void) {
-  io_eff(CID_SYNTAX_VALIDATE, syntax_validate_run, 0);
+  io_eff(CID_Syntax_validate, syntax_validate_run);
 }

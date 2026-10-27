@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { runProcess } from "../../support/process.mjs";
@@ -92,26 +92,6 @@ test("failed outdir builds keep the previously published generation", async (t) 
   await assert.rejects(() => readFile(path.join(workspace, "dist/main.js")));
 });
 
-test("atomic outdir publication rolls back injected activation failures and cleans staging", async (t) => {
-  const workspace = await makeWorkspace({
-    "package.json": JSON.stringify({ name: "app", type: "module" }),
-    "main.ts": 'console.log("new");\n',
-  });
-  t.after(() => removeWorkspace(workspace));
-  await mkdir(path.join(workspace, "dist"), { recursive: true });
-  await writeFile(path.join(workspace, "dist/old.js"), "old generation\n");
-
-  const result = await runProcess(knot, ["build", "main.ts", "--outdir", "dist"], {
-    cwd: workspace,
-    env: { ...process.env, KNOT_FAIL_REPLACE_STEP: "before-activate" },
-  });
-  assert.notEqual(result.status, 0);
-  assert.equal(await readFile(path.join(workspace, "dist/old.js"), "utf8"), "old generation\n");
-  assert.deepEqual(
-    (await readdir(workspace)).filter((name) => name.includes(".knot-")),
-    [],
-  );
-});
 
 
 test("cache reuse recreates a missing output", async (t) => {

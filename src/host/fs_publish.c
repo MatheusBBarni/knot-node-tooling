@@ -905,5 +905,5 @@ Term fs_publish_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) fs_publish_use(void) {
-  io_eff(CID_FS_PUBLISH, fs_publish_run, 0);
+  io_eff(CID_Fs_publish, fs_publish_run);
 }

@@ -43,5 +43,5 @@ Term data_toml_run(Env env, Term *args, IoWork *work) {
 }
 
 static void __attribute__((constructor)) data_toml_use(void) {
-  io_eff(CID_DATA_TOML, data_toml_run, 0);
+  io_eff(CID_Data_toml, data_toml_run);
 }

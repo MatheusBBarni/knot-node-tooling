@@ -241,7 +241,7 @@ static void http_get_file_call(IoWork* w) {
 static Term http_get_file_pack(Env e, IoWork* w) {
   HttpGetFile* g = (HttpGetFile*)w->data;
   Term r = w->code != 0 ? io_fail(e, w->code, NULL)
-    : io_done(e, term_pak(CID_UNIT, 0));
+    : io_done(e, term_pak(CID_Unit, 0));
   free(g->url);
   free(g->dest);
   free(g);
@@ -263,5 +263,5 @@ Term http_get_file_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) http_get_file_use(void) {
-  io_eff(CID_HTTP_GET_FILE, http_get_file_run, 0);
+  io_eff(CID_Http_get_file, http_get_file_run);
 }

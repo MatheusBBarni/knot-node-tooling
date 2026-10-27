@@ -86,5 +86,5 @@ Term data_read_utf8_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) data_read_utf8_use(void) {
-  io_eff(CID_DATA_READ_UTF8, data_read_utf8_run, 0);
+  io_eff(CID_Data_read_utf8, data_read_utf8_run);
 }

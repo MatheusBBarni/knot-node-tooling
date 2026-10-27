@@ -1,15 +1,15 @@
 # Bend2 capability gate
 
-Date: 2026-09-17
+Date: 2026-10-27
 
-Pinned compiler: Bend 2.0.24 (Apache-2.0)
+Pinned compiler: Bend 2.0.39 (Apache-2.0)
 
 Artifacts:
 
 | Target | URL | SHA-256 |
 | --- | --- | --- |
-| `darwin-arm64` | `https://github.com/bendlang/bend/releases/download/v2.0.24/bend-2.0.24-darwin-arm64.tar.gz` | `b17380ac7b8fce5c5c0250d23c9bb6d99cc9737bfca8a9e5428e051325926e1e` |
-| `linux-x64` | `https://github.com/bendlang/bend/releases/download/v2.0.24/bend-2.0.24-linux-x64.tar.gz` | `a05c1b5ecab1393f3dd5d67fedbeb83d5dd244c4187c7b36378b6a67a719ac2a` |
+| `darwin-arm64` | `https://github.com/bendlang/bend/releases/download/v2.0.39/bend-2.0.39-darwin-arm64.tar.gz` | `d4aaef68de545727429ce83b9e88ff3273bf068df599e3542e446755b5f3d83a` |
+| `linux-x64` | `https://github.com/bendlang/bend/releases/download/v2.0.39/bend-2.0.39-linux-x64.tar.gz` | `6cf462fd8f70b094a4950ebb709a9c4ffd8f1d1189d9cedf1fd63cd5d041c7ab` |
 
 Install the artifact matching the runner target.
 
@@ -20,7 +20,7 @@ Tests set `BEND_NO_TELEMETRY=1` so the launcher does not self-update.
 
 | Command | Result |
 | --- | --- |
-| `bend version` | Prints `bend 2.0.24` |
+| `bend version` | Prints `bend 2.0.39` |
 | `bend <file.bend>` | Checks, then runs `main` on the JS backend |
 | `bend <file.bend> -o <bin>` | Checks, then builds a native CPU binary |
 | `bend <file.bend> -o <file.c>` | Emits C |
@@ -48,11 +48,17 @@ Present:
 - `File.open` / `read` / `read_bytes` / `write` / `close` (`r`, `w`, `a`)
 - `TCP.listen` / `accept` / `connect` / `send` / `recv`
 - `UDP.bind` / `send_to` / `recv_from` / `poll`
+On Bend 2.0.39, `TCP.recv` returns `Maybe<String>` (`None` at EOF). A failed `TCP.send` includes unsent bytes that can be resumed with `TCP.send_bytes`.
+
 
 Knot host adapters now in `src/host/`:
 
 - argv via `KNOT_ARG_*` from `bin/knot` (Bend binaries steal argv for `--threads`/`--gpu`)
 - Registry metadata GET is Bend `TCP.connect`/`send`/`recv`, same shape as `demos/io_http_fetch`
+- `TCP.listen` and `TCP.accept` predate 2.0.39; that release adds no higher-level server effect. The native `Server.run` adapter stays in C for root-confined `openat`/`O_NOFOLLOW` reads and build-process supervision.
+
+- Native host effects use generated CIDs such as `CID_Server_run` and Bend 2.0.39's two-argument `io_eff(cid, run)` registration.
+
 - `Http.get_file` remains C: `TCP.recv` decodes UTF-8, so gzip tarball bytes cannot round-trip a String
 - `Fs.mkdir_p` remains C: Base `File.open` does not create parent directories
 - `Tar.extract` remains C: gzip inflate is not in Base

@@ -123,5 +123,5 @@ Term gzip_inflate_file_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) gzip_inflate_file_use(void) {
-  io_eff(CID_GZIP_INFLATE_FILE, gzip_inflate_file_run, 0);
+  io_eff(CID_Gzip_inflate_file, gzip_inflate_file_run);
 }

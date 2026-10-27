@@ -56,5 +56,5 @@ Term fs_read_dir_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) fs_read_dir_use(void) {
-  io_eff(CID_FS_READ_DIR, fs_read_dir_run, 0);
+  io_eff(CID_Fs_read_dir, fs_read_dir_run);
 }

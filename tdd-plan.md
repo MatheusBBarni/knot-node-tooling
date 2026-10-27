@@ -27,12 +27,12 @@ Without that correspondence, a Lean proof says nothing about the shipped binary.
 ## 2. Current constraint
 
 The Bend2 capability gate has passed.
-The pin is `toolchain.json`: Bend 2.0.4 from `https://bend-lang.com/dl/2.0.4.tar.gz`, Apache-2.0, SHA-256 `dff7d7e7b42a4572c79d3084093521d198a93af4684d4a10fe8322c265481734`.
+The pin is `toolchain.json`: Bend 2.0.39 (Apache-2.0), with artifact URLs and SHA-256 values recorded there.
 Details are in `docs/bend2-capability.md`.
 
 Frozen commands:
 
-- `bend --version` prints `bend 2.0.4`.
+- `bend version` prints `bend 2.0.39`.
 - `bend <file.bend>` checks and runs `main` on the JS backend.
 - `bend <file.bend> -o <bin>` builds a native CPU binary.
 - A false or open proof exits 1.

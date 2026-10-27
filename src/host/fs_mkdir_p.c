@@ -28,7 +28,7 @@ static void fs_mkdir_p_call(IoWork* w) {
 
 static Term fs_mkdir_p_pack(Env e, IoWork* w) {
   Term r = w->code != 0 ? io_fail(e, w->code, NULL)
-    : io_done(e, term_pak(CID_UNIT, 0));
+    : io_done(e, term_pak(CID_Unit, 0));
   free(w->data);
   return r;
 }
@@ -43,5 +43,5 @@ Term fs_mkdir_p_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) fs_mkdir_p_use(void) {
-  io_eff(CID_FS_MKDIR_P, fs_mkdir_p_run, 0);
+  io_eff(CID_Fs_mkdir_p, fs_mkdir_p_run);
 }

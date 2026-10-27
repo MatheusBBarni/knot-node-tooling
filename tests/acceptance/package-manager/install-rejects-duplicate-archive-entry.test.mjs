@@ -6,6 +6,7 @@ import { gzipSync } from "node:zlib";
 import { sriSha512 } from "../../support/registry.mjs";
 import { runProcess } from "../../support/process.mjs";
 import { makeWorkspace, removeWorkspace } from "../../support/workspace.mjs";
+import { KnotTestHome } from "../../support/home.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const knot = process.env.KNOT ?? path.join(repoRoot, "bin/knot");
@@ -56,6 +57,7 @@ function duplicateTarball() {
 }
 
 test("install rejects a tarball with a duplicate archive path", async (t) => {
+  const home = await KnotTestHome.create(t);
   const tarball = duplicateTarball();
   const integrity = sriSha512(tarball);
   const tarballPath = `/${pkgName}/-/${pkgName}-1.0.0.tgz`;
@@ -126,6 +128,7 @@ test("install rejects a tarball with a duplicate archive path", async (t) => {
 
   const install = await runProcess(knot, ["install", "--registry", registryUrl], {
     cwd: workspace,
+    env: KnotTestHome.env(home),
     timeoutMs: 60_000,
   });
   assert.notEqual(install.status, 0);

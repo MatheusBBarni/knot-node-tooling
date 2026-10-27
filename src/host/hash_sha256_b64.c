@@ -64,5 +64,5 @@ Term hash_sha256_b64_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) hash_sha256_b64_use(void) {
-  io_eff(CID_HASH_SHA256_B64, hash_sha256_b64_run, 0);
+  io_eff(CID_Hash_sha256_b64, hash_sha256_b64_run);
 }

@@ -247,5 +247,5 @@ Term protocol_request_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) protocol_request_use(void) {
-  io_eff(CID_PROTOCOL_REQUEST, protocol_request_run, 0);
+  io_eff(CID_Protocol_request, protocol_request_run);
 }

@@ -21,5 +21,5 @@ Term os_platform_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) os_platform_use(void) {
-  io_eff(CID_OS_PLATFORM, os_platform_run, 0);
+  io_eff(CID_Os_platform, os_platform_run);
 }

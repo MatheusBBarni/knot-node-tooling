@@ -39,7 +39,7 @@ static void os_exec_call(IoWork* w) {
 static Term os_exec_pack(Env e, IoWork* w) {
   OsExec* g = (OsExec*)w->data;
   Term r = w->code != 0 ? io_fail(e, w->code, NULL)
-    : io_done(e, term_pak(CID_UNIT, 0));
+    : io_done(e, term_pak(CID_Unit, 0));
   free(g->cmd);
   free(g->arg);
   free(g->cwd);
@@ -64,5 +64,5 @@ Term os_exec_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) os_exec_use(void) {
-  io_eff(CID_OS_EXEC, os_exec_run, 0);
+  io_eff(CID_Os_exec, os_exec_run);
 }

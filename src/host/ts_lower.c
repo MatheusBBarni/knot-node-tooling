@@ -570,5 +570,5 @@ Term ts_lower_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) ts_lower_use(void) {
-  io_eff(CID_TS_LOWER, ts_lower_run, 0);
+  io_eff(CID_Ts_lower, ts_lower_run);
 }

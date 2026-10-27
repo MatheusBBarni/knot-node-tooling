@@ -47,7 +47,7 @@ static void fs_remove_dir_call(IoWork* w) {
 
 static Term fs_remove_dir_pack(Env e, IoWork* w) {
   Term r = w->code != 0 ? io_fail(e, w->code, NULL)
-    : io_done(e, term_pak(CID_UNIT, 0));
+    : io_done(e, term_pak(CID_Unit, 0));
   free(w->data);
   return r;
 }
@@ -62,5 +62,5 @@ Term fs_remove_dir_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) fs_remove_dir_use(void) {
-  io_eff(CID_FS_REMOVE_DIR, fs_remove_dir_run, 0);
+  io_eff(CID_Fs_remove_dir, fs_remove_dir_run);
 }

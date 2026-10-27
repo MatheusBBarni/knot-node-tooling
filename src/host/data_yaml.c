@@ -43,5 +43,5 @@ Term data_yaml_run(Env env, Term *args, IoWork *work) {
 }
 
 static void __attribute__((constructor)) data_yaml_use(void) {
-  io_eff(CID_DATA_YAML, data_yaml_run, 0);
+  io_eff(CID_Data_yaml, data_yaml_run);
 }

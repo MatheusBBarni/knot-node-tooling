@@ -564,7 +564,7 @@ static void fs_layout_pkg_call(IoWork* w) {
 static Term fs_layout_pkg_pack(Env e, IoWork* w) {
   FsLayoutPkg* g = (FsLayoutPkg*)w->data;
   Term r = w->code != 0 ? io_fail(e, w->code, NULL)
-    : io_done(e, term_pak(CID_UNIT, 0));
+    : io_done(e, term_pak(CID_Unit, 0));
   free(g->dest);
   free(g->name);
   free(g);
@@ -586,5 +586,5 @@ Term fs_layout_pkg_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) fs_layout_pkg_use(void) {
-  io_eff(CID_FS_LAYOUT_PKG, fs_layout_pkg_run, 0);
+  io_eff(CID_Fs_layout_pkg, fs_layout_pkg_run);
 }

@@ -456,5 +456,5 @@ Term jsx_lower_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) jsx_lower_use(void) {
-  io_eff(CID_JSX_LOWER, jsx_lower_run, 0);
+  io_eff(CID_Jsx_lower, jsx_lower_run);
 }

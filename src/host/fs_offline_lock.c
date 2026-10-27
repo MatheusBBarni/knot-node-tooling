@@ -252,5 +252,5 @@ Term fs_offline_lock_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) fs_offline_lock_use(void) {
-  io_eff(CID_FS_OFFLINE_LOCK, fs_offline_lock_run, 0);
+  io_eff(CID_Fs_offline_lock, fs_offline_lock_run);
 }
