@@ -113,7 +113,7 @@ test("Node defaults use executable .mjs and .cjs paths without package scopes", 
   assert.equal(namedExecution.stdout, "42\n");
   const mts = await runProcess(knot, ["build", "module.mts", "--target", "node", "--format", "esm", "--entry-names", "[name].[ext]", "--outdir", "mts-dist"], { cwd: workspace });
   assert.equal(mts.status, 0, mts.stderr);
-  assert.deepEqual(await readdir(path.join(workspace, "mts-dist")), ["module.mjs"]);
+  assert.deepEqual((await readdir(path.join(workspace, "mts-dist"))).filter((name) => !["active.json", "previous.json", "generations", "leases", "gc.lock"].includes(name)), ["module.mjs"]);
   const importedMts = await runProcess(process.execPath, ["--input-type=module", "-e", 'console.log((await import("./mts-dist/module.mjs")).value)'], { cwd: workspace });
   assert.equal(importedMts.status, 0, importedMts.stderr);
   assert.equal(importedMts.stdout, "3\n");
@@ -148,6 +148,33 @@ test("Node ESM rejects a shared .js chunk in a CommonJS output scope before publ
   assert.notEqual(nonWriting.status, 0);
   assert.match(nonWriting.stderr, /output_module_type/);
   assert.deepEqual(await readdir(path.join(workspace, "dist")), before);
+});
+
+test("show-config records the scope of an emitted .js shared chunk", async (t) => {
+  const workspace = await makeWorkspace({
+    "package.json": JSON.stringify({ type: "commonjs" }),
+    "shared.ts": "export const value = 40;\n",
+    "one.ts": "import { value } from \"./shared.ts\";\nexport const answer = value + 2;\n",
+    "two.ts": "import { value } from \"./shared.ts\";\nexport const answer = value + 3;\n",
+  });
+  t.after(() => removeWorkspace(workspace));
+  const args = ["build", "one.ts", "two.ts", "--target", "node", "--format", "esm", "--splitting", "--outdir", "dist", "--chunk-naming", "shared.js", "--show-config"];
+  const incompatible = await runProcess(knot, args, { cwd: workspace });
+  assert.notEqual(incompatible.status, 0);
+  assert.match(incompatible.stderr, /output_module_type/);
+  await writeFile(path.join(workspace, "package.json"), JSON.stringify({ type: "module" }));
+  const first = await runProcess(knot, args, { cwd: workspace });
+  assert.equal(first.status, 0, first.stderr);
+  const shown = JSON.parse(first.stdout);
+  const chunk = shown.config.configInputs.outputPackages.find((item) => item.output.endsWith("shared.js"));
+  assert.equal(chunk.state, "present");
+  assert.equal(chunk.type, "module");
+  await writeFile(path.join(workspace, "package.json"), JSON.stringify({ name: "app", type: "module" }));
+  const second = await runProcess(knot, args, { cwd: workspace });
+  assert.equal(second.status, 0, second.stderr);
+  const next = JSON.parse(second.stdout);
+  assert.equal(next.config.configInputs.outputPackages.find((item) => item.output.endsWith("shared.js")).type, "module");
+  assert.notEqual(next.configDigest, shown.configDigest);
 });
 
 test("Node .js output rejects a symlinked package scope manifest", async (t) => {

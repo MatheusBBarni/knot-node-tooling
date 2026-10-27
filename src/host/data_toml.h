@@ -8,6 +8,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "data_limits.h"
+#include "span_status.h"
+
 /* A node's mode distinguishes a header-created implicit table from a table
  * created by dotted assignments. Only the former can later be declared. */
 typedef struct KnotTomlNode KnotTomlNode;
@@ -54,7 +57,7 @@ static int knot_toml_byte(KnotTomlParser *p, KnotTomlBuf *b, char c) {
   return knot_toml_add(p, b, &c, 1);
 }
 static KnotTomlNode *knot_toml_node(KnotTomlParser *p, unsigned kind, unsigned mode, size_t depth) {
-  if (depth > 128 || p->nodes >= 1000000) { knot_toml_fail(p, "resource_limit"); return NULL; }
+  if (depth >= knot_limit_depth() || p->nodes >= knot_limit_nodes()) { knot_toml_fail(p, "resource_limit"); return NULL; }
   KnotTomlNode *n = (KnotTomlNode *)calloc(1, sizeof(*n));
   if (!n) { knot_toml_fail(p, "resource_limit"); return NULL; }
   n->kind = kind; n->mode = mode; n->depth = depth;
@@ -414,7 +417,7 @@ static int knot_toml_scalar(KnotTomlParser *p, KnotTomlNode *node, KnotTomlKey t
 }
 static KnotTomlNode *knot_toml_value(KnotTomlParser *p, size_t depth) {
   if (p->error) return NULL;
-  if (depth > 128) { knot_toml_fail(p, "resource_limit"); return NULL; }
+  if (depth >= knot_limit_depth()) { knot_toml_fail(p, "resource_limit"); return NULL; }
   if (p->at == p->end) { knot_toml_fail(p, "syntax_error"); return NULL; }
   unsigned char c = *p->at;
   if (c == '"' || c == '\'') {
@@ -616,7 +619,14 @@ static const char *knot_data_toml_json(const char *source, size_t length, char *
   }
   KnotTomlBuf json = {0};
   if (!p.error) knot_toml_json_node(&p, &json, p.root);
-  const char *result = p.error;
+  static char knot_toml_status[192];
+  const char *result = NULL;
+  if (p.error) {
+    size_t offset = (size_t)(p.at - (const unsigned char *)source);
+    if (offset > length) offset = length;
+    knot_span_status(source, length, offset, p.error, knot_toml_status, sizeof knot_toml_status);
+    result = knot_toml_status;
+  }
   if (!result) { *json_out = json.s; json.s = NULL; }
   free(json.s); free(p.slots);
   for (KnotTomlNode *n = p.allocated; n;) {

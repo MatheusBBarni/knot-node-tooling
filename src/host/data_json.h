@@ -4,8 +4,12 @@
 #include <errno.h>
 #include <math.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "data_limits.h"
+#include "span_status.h"
 
 /* Validation does not materialize a value tree. Source bytes are retained by
  * the caller, and duplicate object keys are compared after JSON decoding. */
@@ -232,7 +236,7 @@ static int knot_dj_number(KnotDataJson* p) {
 
 static int knot_dj_value(KnotDataJson* p, size_t depth) {
   knot_dj_ws(p);
-  if (depth > 128 || ++p->nodes > 1000000) { p->error = "resource_limit"; return 0; }
+  if (depth >= knot_limit_depth() || ++p->nodes > knot_limit_nodes()) { p->error = "resource_limit"; return 0; }
   if (p->at == p->end) return 0;
   unsigned char c = *p->at;
   if (c == '{') return knot_dj_object(p, depth);
@@ -247,12 +251,27 @@ static int knot_dj_value(KnotDataJson* p, size_t depth) {
   return 1;
 }
 
+static char knot_json_status[192];
+
 static const char* knot_data_json_validate(const char* text) {
-  KnotDataJson parser = {(const unsigned char*)text, (const unsigned char*)text + strlen(text), 0, "syntax_error"};
-  if (!knot_dj_valid_utf8(parser.at, parser.end)) return "invalid_encoding";
-  if (!knot_dj_value(&parser, 0)) return parser.error;
+  const unsigned char* begin = (const unsigned char*)(text == NULL ? "" : text);
+  size_t length = text == NULL ? 0 : strlen(text);
+  KnotDataJson parser = {begin, begin + length, 0, "syntax_error"};
+  if (!knot_dj_valid_utf8(parser.at, parser.end)) {
+    knot_span_status((const char*)begin, length, 0, "invalid_encoding", knot_json_status, sizeof knot_json_status);
+    return knot_json_status;
+  }
+  if (!knot_dj_value(&parser, 0)) {
+    knot_span_status((const char*)begin, length, (size_t)(parser.at - begin), parser.error, knot_json_status, sizeof knot_json_status);
+    return knot_json_status;
+  }
   knot_dj_ws(&parser);
-  return parser.at == parser.end ? "ok" : "syntax_error";
+  if (parser.at != parser.end) {
+    knot_span_status((const char*)begin, length, (size_t)(parser.at - begin), "syntax_error", knot_json_status, sizeof knot_json_status);
+    return knot_json_status;
+  }
+  snprintf(knot_json_status, sizeof knot_json_status, "ok");
+  return knot_json_status;
 }
 
 #endif

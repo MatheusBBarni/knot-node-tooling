@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
@@ -17,7 +18,7 @@ test("selected declarative profile builds with CLI precedence", async (t) => {
 
   const profile = await runProcess(knot, ["build", "entry.ts", "--profile", "production"], { cwd: workspace });
   assert.equal(profile.status, 0, profile.stderr);
-  assert.deepEqual(await readdir(path.join(workspace, "production")), ["entry.cjs"]);
+  assert.deepEqual((await readdir(path.join(workspace, "production"))).filter((name) => !["active.json", "previous.json", "generations", "leases", "gc.lock"].includes(name)), ["entry.cjs"]);
   const executed = await runProcess(process.execPath, ["-e", 'console.log(require("./production/entry.cjs").value)'], { cwd: workspace });
   assert.equal(executed.status, 0, executed.stderr);
   assert.equal(executed.stdout, "42\n");
@@ -109,4 +110,109 @@ test("equivalent profile and CLI minification share a semantic digest", async (t
   assert.equal(profile.status, 0, profile.stderr);
   assert.equal(cli.status, 0, cli.stderr);
   assert.equal(JSON.parse(profile.stdout).configDigest, JSON.parse(cli.stdout).configDigest);
+});
+
+test("profile sourcemap and packages apply unless the CLI overrides them", async (t) => {
+  const workspace = await makeWorkspace({
+    "package.json": JSON.stringify({ name: "app", type: "module" }),
+    "entry.ts": "import { missing } from \"left-pad\";\nexport const value = missing;\n",
+    "knot.toml": "[build.production]\ntarget = \"browser\"\nformat = \"esm\"\noutdir = \"dist\"\nsourcemap = \"external\"\npackages = \"external\"\n",
+  });
+  t.after(() => removeWorkspace(workspace));
+  const built = await runProcess(knot, ["build", "entry.ts", "--profile", "production"], { cwd: workspace });
+  assert.equal(built.status, 0, built.stderr);
+  const js = await readFile(path.join(workspace, "dist/entry.js"), "utf8");
+  assert.match(js, /from "left-pad"/);
+  assert.equal(JSON.parse(await readFile(path.join(workspace, "dist/entry.js.map"), "utf8")).version, 3);
+  const overridden = await runProcess(knot, ["build", "entry.ts", "--profile", "production", "--packages", "bundle", "--sourcemap", "none", "--show-config"], { cwd: workspace });
+  assert.equal(overridden.status, 0, overridden.stderr);
+  const shown = JSON.parse(overridden.stdout);
+  assert.equal(shown.config.packages, "bundle");
+  assert.equal(shown.config.sourceMap, "none");
+});
+
+test("a nested profile library table supplies packageJson", async (t) => {
+  const source = JSON.stringify({
+    name: "lib",
+    type: "module",
+    exports: { ".": { import: "./dist/entry.mjs" } },
+  });
+  const workspace = await makeWorkspace({
+    "package.json": source,
+    "entry.ts": "export const value = 1;\n",
+    "knot.toml": [
+      "[build.production]",
+      'target = "node"',
+      'format = "esm"',
+      'packages = "external"',
+      'outdir = "dist"',
+      "[build.production.library]",
+      'packageJson = "package.json"',
+      "",
+    ].join("\n"),
+  });
+  t.after(() => removeWorkspace(workspace));
+
+  const shown = await runProcess(knot, ["build", "entry.ts", "--profile", "production", "--show-config"], { cwd: workspace });
+  assert.equal(shown.status, 0, shown.stderr);
+  const record = JSON.parse(shown.stdout);
+  assert.equal(record.config.library.packageJson, "package.json");
+  assert.equal(record.config.configInputs.libraryManifest, createHash("sha256").update(source).digest("base64"));
+
+  const built = await runProcess(knot, ["build", "entry.ts", "--profile", "production"], { cwd: workspace });
+  assert.equal(built.status, 0, built.stderr);
+  assert.notEqual(await readFile(path.join(workspace, "dist/entry.mjs"), "utf8"), "");
+});
+
+test("the CLI library export overrides the nested profile table", async (t) => {
+  const source = JSON.stringify({
+    name: "lib",
+    type: "module",
+    exports: { ".": { import: "./dist/entry.mjs" } },
+  });
+  const workspace = await makeWorkspace({
+    "package.json": source,
+    "missing.json": "{\"type\":\"module\",\"exports\":{\".\":{\"import\":\"./dist/missing.mjs\"}}}",
+    "entry.ts": "export const value = 1;\n",
+    "knot.toml": [
+      "[build.production]",
+      'target = "node"',
+      'format = "esm"',
+      'packages = "external"',
+      'outdir = "dist"',
+      "[build.production.library]",
+      'packageJson = "missing.json"',
+      "",
+    ].join("\n"),
+  });
+  t.after(() => removeWorkspace(workspace));
+
+  const built = await runProcess(
+    knot,
+    ["build", "entry.ts", "--profile", "production", "--library-exports", "package.json"],
+    { cwd: workspace },
+  );
+  assert.equal(built.status, 0, built.stderr);
+  assert.notEqual(await readFile(path.join(workspace, "dist/entry.mjs"), "utf8"), "");
+});
+
+test("a profile enables splitting without a CLI flag", async (t) => {
+  const workspace = await makeWorkspace({
+    "package.json": JSON.stringify({ name: "app", type: "module" }),
+    "lazy.ts": "export const value = 5;\n",
+    "entry.ts": "const module = await import(\"./lazy.ts\");\nconsole.log(module.value);\n",
+    "knot.toml": "[build.release]\nsplitting = true\noutdir = \"dist\"\n",
+  });
+  t.after(() => removeWorkspace(workspace));
+  const built = await runProcess(knot, ["build", "entry.ts", "--profile", "release"], { cwd: workspace });
+  assert.equal(built.status, 0, built.stderr);
+  const js = await readFile(path.join(workspace, "dist/entry.js"), "utf8");
+  const matched = js.match(/import\s*\(\s*["'](\.\/[^"']+)["']/);
+  assert.ok(matched, js);
+  assert.doesNotMatch(js, /export const value = 5/);
+  const run = await runProcess(process.execPath, ["dist/entry.js"], { cwd: workspace });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.stdout, "5\n");
+  const shown = await runProcess(knot, ["build", "entry.ts", "--profile", "release", "--show-config"], { cwd: workspace });
+  assert.equal(JSON.parse(shown.stdout).config.splitting, true);
 });

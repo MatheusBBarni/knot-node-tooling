@@ -1,0 +1,4 @@
+interface:
+  display_name: "Spec Finder Archive Tasks"
+  short_description: "Archive completed Spec Finder task packets"
+  default_prompt: "Use $sf-archive-tasks to archive completed Spec Finder task packets and refresh reports."

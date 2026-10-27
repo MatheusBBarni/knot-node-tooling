@@ -3,10 +3,10 @@ import Base
 # A selected build table is interpreted declaratively; unsupported selected
 # values fail explicitly rather than silently changing the build.
 type Settings is Data:
-  Settings{target: String, format: String, outdir: String, minify: Bool}
+  Settings{target: String, format: String, outdir: String, minify: Bool, sourcemap: String, packages: String, library: String, splitting: Bool}
 
 def default_settings() -> Settings:
-  Settings{"browser", "esm", "", False{}}
+  Settings{"browser", "esm", "", False{}, "", "", "", False{}}
 
 def profile_char(+c: Char) -> Bool:
   Bool.or(Char.is_alpha(c), Bool.or(Char.is_digit(c), Bool.or(Char.is_eq(c, '-'), Char.is_eq(c, '_'))))
@@ -47,37 +47,62 @@ def quoted(+value: String) -> Result<&2, &2, String, String>:
   +v = String.trim(value)
   quoted_kind(v, Bool.and(String.starts_with(v, "\""), String.ends_with(v, "\"")))
 
-def target_kind(+value: String, +format: String, +outdir: String, minify: Bool, valid: Bool) -> Result<&2, &2, String, Settings>:
+def target_kind(+value: String, +format: String, +outdir: String, minify: Bool, +sourcemap: String, +packages: String, +library: String, splitting: Bool, valid: Bool) -> Result<&2, &2, String, Settings>:
   match valid:
     case True{}:
-      Done{Settings{value, format, outdir, minify}}
+      Done{Settings{value, format, outdir, minify, sourcemap, packages, library, splitting}}
     case False{}:
       Fail{"knot: invalid profile target (invalid_option)"}
 
-def format_kind(+target: String, +value: String, +outdir: String, minify: Bool, valid: Bool) -> Result<&2, &2, String, Settings>:
+def format_kind(+target: String, +value: String, +outdir: String, minify: Bool, +sourcemap: String, +packages: String, +library: String, splitting: Bool, valid: Bool) -> Result<&2, &2, String, Settings>:
   match valid:
     case True{}:
-      Done{Settings{target, value, outdir, minify}}
+      Done{Settings{target, value, outdir, minify, sourcemap, packages, library, splitting}}
     case False{}:
       Fail{"knot: invalid profile format (invalid_option)"}
 
-def outdir_kind(+target: String, +format: String, +value: String, minify: Bool, valid: Bool) -> Result<&2, &2, String, Settings>:
+def outdir_kind(+target: String, +format: String, +value: String, minify: Bool, +sourcemap: String, +packages: String, +library: String, splitting: Bool, valid: Bool) -> Result<&2, &2, String, Settings>:
   match valid:
     case True{}:
-      Done{Settings{target, format, value, minify}}
+      Done{Settings{target, format, value, minify, sourcemap, packages, library, splitting}}
     case False{}:
       Fail{"knot: invalid profile outdir (invalid_path)"}
 
+def sourcemap_kind(+target: String, +format: String, +outdir: String, minify: Bool, +value: String, +packages: String, +library: String, splitting: Bool, valid: Bool) -> Result<&2, &2, String, Settings>:
+  match valid:
+    case True{}:
+      Done{Settings{target, format, outdir, minify, value, packages, library, splitting}}
+    case False{}:
+      Fail{"knot: invalid profile sourcemap (invalid_option)"}
+
+def packages_kind(+target: String, +format: String, +outdir: String, minify: Bool, +sourcemap: String, +value: String, +library: String, splitting: Bool, valid: Bool) -> Result<&2, &2, String, Settings>:
+  match valid:
+    case True{}:
+      Done{Settings{target, format, outdir, minify, sourcemap, value, library, splitting}}
+    case False{}:
+      Fail{"knot: invalid profile packages (invalid_option)"}
+
+def library_kind(+target: String, +format: String, +outdir: String, minify: Bool, +sourcemap: String, +packages: String, +value: String, splitting: Bool, valid: Bool) -> Result<&2, &2, String, Settings>:
+  match valid:
+    case True{}:
+      Done{Settings{target, format, outdir, minify, sourcemap, packages, value, splitting}}
+    case False{}:
+      Fail{"knot: invalid profile packageJson (invalid_path)"}
+
 def apply_value(current: Settings, +key: String, +value: String) -> Result<&2, &2, String, Settings>:
   match current:
-    case Settings{+target, +format, +outdir, minify}:
+    case Settings{+target, +format, +outdir, minify, +sourcemap, +packages, +library, splitting}:
       match key:
         case "target":
-          target_kind(value, format, outdir, minify, Bool.or(String.eq(value, "browser"), String.eq(value, "node")))
+          target_kind(value, format, outdir, minify, sourcemap, packages, library, splitting, Bool.or(String.eq(value, "browser"), String.eq(value, "node")))
         case "format":
-          format_kind(target, value, outdir, minify, Bool.or(String.eq(value, "esm"), String.eq(value, "cjs")))
+          format_kind(target, value, outdir, minify, sourcemap, packages, library, splitting, Bool.or(String.eq(value, "esm"), String.eq(value, "cjs")))
         case "outdir":
-          outdir_kind(target, format, value, minify, Bool.and(Bool.not(String.is_empty(value)), Bool.and(path_value(value), Bool.not(String.contains(value, "..")))))
+          outdir_kind(target, format, value, minify, sourcemap, packages, library, splitting, Bool.and(Bool.not(String.is_empty(value)), Bool.and(path_value(value), Bool.not(String.contains(value, "..")))))
+        case "sourcemap":
+          sourcemap_kind(target, format, outdir, minify, value, packages, library, splitting, Bool.or(String.eq(value, "none"), Bool.or(String.eq(value, "linked"), Bool.or(String.eq(value, "external"), String.eq(value, "inline")))))
+        case "packages":
+          packages_kind(target, format, outdir, minify, sourcemap, value, library, splitting, Bool.or(String.eq(value, "bundle"), String.eq(value, "external")))
         case _:
           Fail{"knot: unknown build profile key " ++ key ++ " (invalid_option)"}
 
@@ -88,24 +113,59 @@ def apply_quoted(+key: String, selected: Result<&2, &2, String, String>, current
     case Done{value}:
       apply_value(current, key, value)
 
-def apply_minify_value(current: Settings, +value: String) -> Result<&2, &2, String, Settings>:
+def apply_bool_invalid(minify_key: Bool) -> Result<&2, &2, String, Settings>:
+  match minify_key:
+    case True{}:
+      Fail{"knot: profile minify must be a TOML boolean (invalid_option)"}
+    case False{}:
+      Fail{"knot: profile splitting must be a TOML boolean (invalid_option)"}
+
+def apply_bool_set(+target: String, +format: String, +outdir: String, +sourcemap: String, +packages: String, +library: String, enabled: Bool, minify_key: Bool, minify: Bool, splitting: Bool) -> Result<&2, &2, String, Settings>:
+  match minify_key:
+    case True{}:
+      Done{Settings{target, format, outdir, enabled, sourcemap, packages, library, splitting}}
+    case False{}:
+      Done{Settings{target, format, outdir, minify, sourcemap, packages, library, enabled}}
+
+def apply_bool_kind(+target: String, +format: String, +outdir: String, minify: Bool, +sourcemap: String, +packages: String, +library: String, splitting: Bool, +value: String, minify_key: Bool, valid: Bool) -> Result<&2, &2, String, Settings>:
+  match valid:
+    case False{}:
+      apply_bool_invalid(minify_key)
+    case True{}:
+      apply_bool_set(target, format, outdir, sourcemap, packages, library, String.eq(value, "true"), minify_key, minify, splitting)
+
+def apply_bool_value(current: Settings, +value: String, minify_key: Bool) -> Result<&2, &2, String, Settings>:
   match current:
-    case Settings{target, format, outdir, _}:
-      match value:
-        case "true":
-          Done{Settings{target, format, outdir, True{}}}
-        case "false":
-          Done{Settings{target, format, outdir, False{}}}
-        case _:
-          Fail{"knot: profile minify must be a TOML boolean (invalid_option)"}
+    case Settings{target, format, outdir, minify, +sourcemap, +packages, +library, splitting}:
+      apply_bool_kind(target, format, outdir, minify, sourcemap, packages, library, splitting, value, minify_key, Bool.or(String.eq(value, "true"), String.eq(value, "false")))
+
+def apply_minify_value(current: Settings, +value: String) -> Result<&2, &2, String, Settings>:
+  apply_bool_value(current, value, True{})
+
+def apply_splitting_value(current: Settings, +value: String) -> Result<&2, &2, String, Settings>:
+  apply_bool_value(current, value, False{})
+
+
+def apply_library_value(current: Settings, +value: String) -> Result<&2, &2, String, Settings>:
+  match current:
+    case Settings{+target, +format, +outdir, minify, +sourcemap, +packages, library, splitting}:
+      library_kind(target, format, outdir, minify, sourcemap, packages, value, splitting, Bool.and(Bool.not(String.is_empty(value)), Bool.and(path_value(value), Bool.not(String.contains(value, "..")))))
+
+def apply_library_quoted(selected: Result<&2, &2, String, String>, current: Settings) -> Result<&2, &2, String, Settings>:
+  match selected:
+    case Fail{message}:
+      Fail{message}
+    case Done{value}:
+      apply_library_value(current, value)
 
 def apply_assignment(+key: String, +value: String, current: Settings) -> Result<&2, &2, String, Settings>:
   match key:
     case "minify":
       apply_minify_value(current, String.trim(value))
+    case "splitting":
+      apply_splitting_value(current, String.trim(value))
     case _:
       apply_quoted(key, quoted(value), current)
-
 def assignment_checked_result(+key: String, +seen: String, checked: Result<&2, &2, String, Settings>) -> Result<&2, &1, String, String & Settings>:
   match checked:
     case Fail{message}:
@@ -125,6 +185,27 @@ def assignment(parts: List<&2, String>, +seen: String, current: Settings) -> Res
     case Con{+key0, Con{+value, Nil{}}}:
       +key = String.trim(key0)
       assignment_checked(key, value, seen, current, String.contains(seen, ";" ++ key ++ ";"))
+    case _:
+      Fail{"knot: invalid build profile assignment (invalid_option)"}
+
+def library_checked(+key: String, +value: String, +seen: String, current: Settings, duplicate: Bool) -> Result<&2, &1, String, String & Settings>:
+  match duplicate:
+    case True{}:
+      Fail{"knot: duplicate profile key " ++ key ++ " (duplicate_option)"}
+    case False{}:
+      assignment_checked_result(key, seen, apply_library_quoted(quoted(value), current))
+
+def library_assignment_key(+key: String, +value: String, +seen: String, current: Settings) -> Result<&2, &1, String, String & Settings>:
+  match key:
+    case "packageJson":
+      library_checked(key, value, seen, current, String.contains(seen, ";" ++ key ++ ";"))
+    case _:
+      Fail{"knot: unknown build profile key " ++ key ++ " (invalid_option)"}
+
+def library_assignment(parts: List<&2, String>, +seen: String, current: Settings) -> Result<&2, &1, String, String & Settings>:
+  match parts:
+    case Con{+key0, Con{+value, Nil{}}}:
+      library_assignment_key(String.trim(key0), value, seen, current)
     case _:
       Fail{"knot: invalid build profile assignment (invalid_option)"}
 
@@ -168,7 +249,7 @@ def comment_escaped(+char: Char, +quoted: Bool, +escaped: Bool) -> Bool:
           SCon{char, strip_comment(0n, rest, comment_quoted(char, quoted, escaped), comment_escaped(char, quoted, escaped), 'a', SNil{}, False{})}
 
 # One selector keeps Bend's recursive call within a single definition.
-@unsafe def select_lines(sel: Nat, lines: List<&2, String>, +wanted: String, +active: Bool, +found: Bool, +seen: String, +settings: Settings, +line: String, decision: Bool, pair: Result<&2, &1, String, String & Settings>) -> Result<&2, &2, String, Settings>:
+@unsafe def select_lines(sel: Nat, lines: List<&2, String>, +wanted: String, +active: Bool, +found: Bool, +seen: String, +settings: Settings, +line: String, decision: Bool, pair: Result<&2, &1, String, String & Settings>, +section: String) -> Result<&2, &2, String, Settings>:
   match sel:
     case 0n:
       match lines:
@@ -176,40 +257,57 @@ def comment_escaped(+char: Char, +quoted: Bool, +escaped: Bool) -> Bool:
           selected_missing(found, wanted, settings)
         case Con{+raw, rest}:
           +text = String.trim(strip_comment(0n, raw, False{}, False{}, 'a', SNil{}, False{}))
-          select_lines(1n, rest, wanted, active, found, seen, settings, text, Bool.or(String.is_empty(text), String.starts_with(text, "#")), pair)
+          select_lines(1n, rest, wanted, active, found, seen, settings, text, Bool.or(String.is_empty(text), String.starts_with(text, "#")), pair, section)
     case 1n:
       match decision:
         case True{}:
-          select_lines(0n, lines, wanted, active, found, seen, settings, "", False{}, pair)
+          select_lines(0n, lines, wanted, active, found, seen, settings, "", False{}, pair, section)
         case False{}:
-          select_lines(2n, lines, wanted, active, found, seen, settings, line, String.starts_with(line, "["), pair)
+          select_lines(2n, lines, wanted, active, found, seen, settings, line, String.starts_with(line, "["), pair, section)
     case 2n:
       match decision:
         case True{}:
-          +selected = String.eq(line, "[build." ++ wanted ++ "]")
-          select_lines(0n, lines, wanted, selected, Bool.or(found, selected), "", settings, "", False{}, pair)
+          select_lines(5n, lines, wanted, active, found, seen, settings, line, String.eq(line, "[build." ++ wanted ++ "]"), pair, section)
         case False{}:
-          select_lines(3n, lines, wanted, active, found, seen, settings, line, active, pair)
+          select_lines(3n, lines, wanted, active, found, seen, settings, line, active, pair, section)
     case 3n:
       match decision:
         case True{}:
-          select_lines(4n, lines, wanted, active, found, seen, settings, "", False{}, assignment(String.split(line, '='), seen, settings))
+          select_lines(7n, lines, wanted, active, found, seen, settings, line, String.eq(section, "library"), pair, section)
         case False{}:
-          select_lines(0n, lines, wanted, active, found, seen, settings, "", False{}, pair)
-    case _:
+          select_lines(0n, lines, wanted, active, found, seen, settings, "", False{}, pair, section)
+    case 4n:
       match pair:
         case Fail{message}:
           Fail{message}
         case Done{entry}:
           (next_seen, next_settings) = entry
-          select_lines(0n, lines, wanted, active, found, next_seen, next_settings, "", False{}, Done{("", default_settings())})
+          select_lines(0n, lines, wanted, active, found, next_seen, next_settings, "", False{}, Done{("", default_settings())}, section)
+    case 5n:
+      match decision:
+        case True{}:
+          select_lines(0n, lines, wanted, True{}, True{}, "", settings, "", False{}, pair, "")
+        case False{}:
+          select_lines(6n, lines, wanted, active, found, seen, settings, line, String.eq(line, "[build." ++ wanted ++ ".library]"), pair, section)
+    case 6n:
+      match decision:
+        case True{}:
+          select_lines(0n, lines, wanted, True{}, True{}, "", settings, "", False{}, pair, "library")
+        case False{}:
+          select_lines(0n, lines, wanted, False{}, found, seen, settings, "", False{}, pair, "")
+    case _:
+      match decision:
+        case True{}:
+          select_lines(4n, lines, wanted, active, found, seen, settings, "", False{}, library_assignment(String.split(line, '='), seen, settings), section)
+        case False{}:
+          select_lines(4n, lines, wanted, active, found, seen, settings, "", False{}, assignment(String.split(line, '='), seen, settings), section)
 
 def select_kind(+text: String, +name: String, valid: Bool) -> Result<&2, &2, String, Settings>:
   match valid:
     case False{}:
       Fail{"knot: invalid build profile name (invalid_option)"}
     case True{}:
-      select_lines(0n, String.lines(text), name, False{}, False{}, "", default_settings(), "", False{}, Done{("", default_settings())})
+      select_lines(0n, String.lines(text), name, False{}, False{}, "", default_settings(), "", False{}, Done{("", default_settings())}, "")
 
 def select(+text: String, +name: String) -> Result<&2, &2, String, Settings>:
   select_kind(text, name, Bool.and(Bool.not(String.is_empty(name)), profile_name(name)))

@@ -71,3 +71,24 @@ test("dynamic external paths follow explicitly named emitted entries", async (t)
   assert.equal(run.status, 0, run.stderr);
   assert.equal(run.stdout, "12\n");
 });
+
+test("a dynamic import edge records the specifier source range", async (t) => {
+  const source = 'export function load() { return import("./lazy.ts"); }\n';
+  const workspace = await makeWorkspace({
+    "package.json": '{"type":"module"}',
+    "main.ts": source,
+    "lazy.ts": "export const value = 1;\n",
+  });
+  t.after(() => removeWorkspace(workspace));
+
+  const result = await runProcess(
+    knot,
+    ["build", "main.ts", "lazy.ts", "--external", "./lazy.ts", "--outdir", "dist", "--splitting", "--manifest", "manifest.json"],
+    { cwd: workspace },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const manifest = JSON.parse(await readFile(path.join(workspace, "manifest.json"), "utf8"));
+  const edge = manifest.outputs[manifest.entries["main.ts"]].dynamicImports[0];
+  const start = source.indexOf('"./lazy.ts"');
+  assert.deepEqual(edge.range, [start, start + '"./lazy.ts"'.length]);
+});

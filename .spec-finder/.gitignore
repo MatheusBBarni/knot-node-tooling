@@ -1,0 +1,5 @@
+# Spec Finder packets stay local; committing them can poison later agent context.
+/tasks/
+/tasks_done/
+/specs/
+/refinements/

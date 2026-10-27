@@ -513,12 +513,53 @@ def map_segs(xs: List<&2, Token>, gen_col: U32, prev_gc: U32, prev_sl: U32, prev
 
 def map_mappings(toks: List<&2, Token>) -> String:
   map_segs(toks, 0, 0, 0, 0, True{})
-
+@unsafe def map_names_k(sel: Nat, toks: List<&2, Token>, +acc: String, +seen: String, first: Bool, +text: String, ident: Bool, dup: Bool) -> String:
+  match sel:
+    case 0n:
+      match toks:
+        case Nil{}:
+          acc
+        case Con{Token{+text2, start, end, line, col}, rest}:
+          map_names_k(1n, rest, acc, seen, first, text2, tok_is_ident(text2), False{})
+    case 1n:
+      match ident:
+        case False{}:
+          map_names_k(0n, toks, acc, seen, first, "", False{}, False{})
+        case True{}:
+          map_names_k(2n, toks, acc, seen, first, text, True{}, String.contains(seen, "\n" ++ text ++ "\n"))
+    case 2n:
+      match dup:
+        case True{}:
+          map_names_k(0n, toks, acc, seen, first, "", False{}, False{})
+        case False{}:
+          map_names_k(3n, toks, acc, seen, first, text, True{}, String.is_empty(acc))
+    case _:
+      match dup:
+        case True{}:
+          map_names_k(0n, toks, json_str(text), "\n" ++ text ++ "\n", False{}, "", False{}, False{})
+        case False{}:
+          map_names_k(0n, toks, acc ++ "," ++ json_str(text), seen ++ text ++ "\n", False{}, "", False{}, False{})
+def map_names(toks: List<&2, Token>) -> String:
+  "[" ++ map_names_k(0n, toks, "", "\n", True{}, "", False{}, False{}) ++ "]"
+def tok_dup_cons(+head: Token, pair: List<&2, Token> & List<&2, Token>) -> List<&2, Token> & List<&2, Token>:
+  (left, right) = pair
+  (Con{head, left}, Con{head, right})
+def tok_dup(xs: List<&2, Token>) -> List<&2, Token> & List<&2, Token>:
+  match xs:
+    case Nil{}:
+      (Nil{}, Nil{})
+    case Con{+head, tail}:
+      tok_dup_cons(head, tok_dup(tail))
+def make_map_pair(+file: String, pair: List<&2, Token> & List<&2, Token>) -> String:
+  (names, mappings) = pair
+  "{\"version\":3,\"file\":" ++ json_str(basename(js_path(file))) ++ ",\"sources\":[" ++ json_str(file) ++ "],\"names\":" ++ map_names(names) ++ ",\"mappings\":" ++ json_str(map_mappings(mappings)) ++ "}"
 def make_map(+file: String, toks: List<&2, Token>) -> String:
-  "{\"version\":3,\"file\":" ++ json_str(basename(js_path(file))) ++ ",\"sources\":[" ++ json_str(file) ++ "],\"names\":[],\"mappings\":" ++ json_str(map_mappings(toks)) ++ "}"
-
+  make_map_pair(file, tok_dup(toks))
+def make_map_sources_pair(+file: String, sources: List<&2, String>, pair: List<&2, Token> & List<&2, Token>) -> String:
+  (names, mappings) = pair
+  "{\"version\":3,\"file\":" ++ json_str(basename(js_path(file))) ++ ",\"sources\":" ++ json_list(sources) ++ ",\"names\":" ++ map_names(names) ++ ",\"mappings\":" ++ json_str(map_mappings(mappings)) ++ "}"
 def make_map_sources(+file: String, sources: List<&2, String>, toks: List<&2, Token>) -> String:
-  "{\"version\":3,\"file\":" ++ json_str(basename(js_path(file))) ++ ",\"sources\":" ++ json_list(sources) ++ ",\"names\":[],\"mappings\":" ++ json_str(map_mappings(toks)) ++ "}"
+  make_map_sources_pair(file, sources, tok_dup(toks))
 
 def tok_rev(xs: List<&2, Token>, acc: List<&2, Token>) -> List<&2, Token>:
   match xs:

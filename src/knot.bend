@@ -36,6 +36,12 @@ def Fs.replace_dir(src: String, dst: String) ->
   import "./host/fs_replace_dir.c"
   import "./host/fs_replace_dir.js"
 
+def Fs.publish(op: String, a: String, b: String, c: String, d: String) ->
+  IO(Result<&1, &1, U32 & String, String>):
+  import "./host/fs_publish.c"
+  import "./host/fs_publish.js"
+
+
 
 def Fs.offline_lock() -> IO(Result<&1, &1, U32 & String, String>):
   import "./host/fs_offline_lock.c"
@@ -94,6 +100,10 @@ def Os.exec_many(cmd: String, args: String, cwd: String) ->
   import "./host/os_exec_many.c"
   import "./host/os_exec_many.js"
 
+def Server.run(port: U32, root: String, entry: String, naming: U32) -> IO(Unit):
+  import "./host/server_run.c"
+  import "./host/server_run.js"
+
 
 
 def Http.get_file(url: String, dest: String) ->
@@ -117,6 +127,11 @@ def Hash.sha256_text(text: String) -> IO(Result<&1, &1, U32 & String, String>):
   import "./host/hash_sha256_text.c"
   import "./host/hash_sha256_text.js"
 
+def Protocol.request() -> IO(Result<&1, &1, U32 & String, String>):
+  import "./host/protocol_request.c"
+  import "./host/protocol_request.js"
+
+
 def Tar.extract(archive: String, dest: String) ->
   IO(Result<&1, &1, U32 & String, Unit>):
   import "./host/tar_extract.c"
@@ -137,6 +152,10 @@ def Data.toml(text: String) -> IO(Result<&1, &1, U32 & String, String>):
 def Data.yaml(text: String) -> IO(Result<&1, &1, U32 & String, String>):
   import "./host/data_yaml.c"
   import "./host/data_yaml.js"
+def Data.limits(spec: String) -> IO(Result<&1, &1, U32 & String, Unit>):
+  import "./host/data_limits.c"
+  import "./host/data_limits.js"
+
 
 
 
@@ -3598,10 +3617,30 @@ def resolve_tsconfig_ex_conds(+importer: String, +spec: String, ex: Bool, +conds
 def resolve_tsconfig_ex(+importer: String, +spec: String, ex: Bool) -> IO(String):
   resolve_tsconfig_ex_conds(importer, spec, ex, "import,module,node,default")
 
+def resolve_tsconfig_at(+importer: String, +spec: String, +path: String, +conds: String, ex: Bool) -> IO(String):
+  match ex:
+    case False{}:
+      resolve_pkg_conds(spec, conds)
+    case True{}:
+      do IO<String>:
+        text : String <- read_text(path)
+        pairs : String <- json_optional_pairs(text, "compilerOptions/paths")
+        resolve_tsconfig_pairs_conds(importer, spec, String.lines(pairs), conds)
+def resolve_tsconfig_custom(+importer: String, +spec: String, +conds: String, custom: Bool) -> IO(String):
+  match custom:
+    case False{}:
+      do IO<String>:
+        ex : Bool <- file_exists("tsconfig.json")
+        resolve_tsconfig_ex_conds(importer, spec, ex, conds)
+    case True{}:
+      do IO<String>:
+        +path : String <- read_text(".knot/tsconfig-path")
+        ex : Bool <- file_exists(path)
+        resolve_tsconfig_at(importer, spec, path, conds, ex)
 def resolve_tsconfig_conds(+importer: String, +spec: String, +conds: String) -> IO(String):
   do IO<String>:
-    ex : Bool <- file_exists("tsconfig.json")
-    resolve_tsconfig_ex_conds(importer, spec, ex, conds)
+    custom : Bool <- file_exists(".knot/tsconfig-path")
+    resolve_tsconfig_custom(importer, spec, conds, custom)
 
 def resolve_tsconfig(+importer: String, +spec: String) -> IO(String):
   resolve_tsconfig_conds(importer, spec, "import,module,node,default")
@@ -3668,6 +3707,50 @@ def take_until_semicolon(+s: String, +acc: String) -> String:
       acc
     case SCon{h, t}:
       take_until_semicolon(t, acc ++ SCon{h, SNil{}})
+def take_until_tab(+s: String, +acc: String) -> String:
+  match s:
+    case SNil{}:
+      acc
+    case SCon{'\t', _}:
+      acc
+    case SCon{h, t}:
+      take_until_tab(t, acc ++ SCon{h, SNil{}})
+def str_dup_cons(+head: Char, pair: String & String) -> String & String:
+  (left, right) = pair
+  (SCon{head, left}, SCon{head, right})
+def str_dup(s: String) -> String & String:
+  match s:
+    case SNil{}:
+      ("", "")
+    case SCon{+head, tail}:
+      str_dup_cons(head, str_dup(tail))
+def list_dup_cons(+head: String, pair: List<&2, String> & List<&2, String>) -> List<&2, String> & List<&2, String>:
+  (left, right) = pair
+  (Con{head, left}, Con{head, right})
+def list_dup(xs: List<&2, String>) -> List<&2, String> & List<&2, String>:
+  match xs:
+    case Nil{}:
+      (Nil{}, Nil{})
+    case Con{+head, tail}:
+      list_dup_cons(head, list_dup(tail))
+def split_head(xs: List<&2, String>) -> String:
+  match xs:
+    case Nil{}:
+      ""
+    case Con{+head, _}:
+      head
+def split_tail(xs: List<&2, String>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{_, +tail}:
+      tail
+def split_field(index: Nat, xs: List<&2, String>) -> String:
+  match index:
+    case 0n:
+      split_head(xs)
+    case 1n+rest:
+      split_field(rest, split_tail(xs))
 def take_until_equals(+s: String, +acc: String) -> String:
   match s:
     case SNil{}:
@@ -4449,41 +4532,106 @@ def css_minify_pair(+css: String, +token: String) -> String:
         case False{}:
           css
 
-@unsafe def css_strip_comments_go(sel: Nat, +s: String, +acc: String, inside: Bool, c: Char, open: Bool, close: Bool) -> String:
+@unsafe def css_strip_comments_go(sel: Nat, +s: String, +acc: String, inside: Bool, c: Char, open: Bool, close: Bool, quote: Char, escaped: Bool) -> String:
   match sel:
     case 0n:
       match s:
         case SNil{}:
           acc
         case SCon{+h, t}:
-          css_strip_comments_go(1n, t, acc, inside, h, String.starts_with(s, "/*"), String.starts_with(s, "*/"))
-    case _:
+          css_strip_comments_go(1n, t, acc, inside, h, String.starts_with(s, "/*"), String.starts_with(s, "*/"), quote, escaped)
+    case 1n:
       match inside:
         case True{}:
-          match close:
-            case True{}:
-              css_strip_comments_go(0n, String.drop(s, 1n), acc, False{}, 'a', False{}, False{})
-            case False{}:
-              css_strip_comments_go(0n, s, acc, True{}, c, False{}, False{})
+          css_strip_comments_go(2n, s, acc, inside, c, open, close, quote, escaped)
         case False{}:
-          match open:
-            case True{}:
-              css_strip_comments_go(0n, String.drop(s, 1n), acc, True{}, 'a', False{}, False{})
-            case False{}:
-              css_strip_comments_go(0n, s, acc ++ SCon{c, SNil{}}, False{}, 'a', False{}, False{})
-
+          css_strip_comments_go(3n, s, acc, inside, c, open, close, quote, escaped)
+    case 2n:
+      match close:
+        case True{}:
+          css_strip_comments_go(0n, String.drop(s, 1n), acc, False{}, 'a', False{}, False{}, 'a', False{})
+        case False{}:
+          css_strip_comments_go(0n, s, acc, True{}, c, False{}, False{}, 'a', False{})
+    case 3n:
+      match quote:
+        case '"':
+          css_strip_comments_go(4n, s, acc, inside, c, open, close, quote, escaped)
+        case '\'':
+          css_strip_comments_go(5n, s, acc, inside, c, open, close, quote, escaped)
+        case _:
+          css_strip_comments_go(8n, s, acc, inside, c, open, close, quote, escaped)
+    case 4n:
+      match escaped:
+        case True{}:
+          css_strip_comments_go(0n, s, acc ++ SCon{c, SNil{}}, False{}, 'a', False{}, False{}, '"', False{})
+        case False{}:
+          css_strip_comments_go(6n, s, acc, inside, c, open, close, quote, escaped)
+    case 5n:
+      match escaped:
+        case True{}:
+          css_strip_comments_go(0n, s, acc ++ SCon{c, SNil{}}, False{}, 'a', False{}, False{}, '\'', False{})
+        case False{}:
+          css_strip_comments_go(7n, s, acc, inside, c, open, close, quote, escaped)
+    case 6n:
+      match c:
+        case '\\':
+          css_strip_comments_go(0n, s, acc ++ SCon{c, SNil{}}, False{}, 'a', False{}, False{}, '"', True{})
+        case '"':
+          css_strip_comments_go(0n, s, acc ++ SCon{c, SNil{}}, False{}, 'a', False{}, False{}, 'a', False{})
+        case _:
+          css_strip_comments_go(0n, s, acc ++ SCon{c, SNil{}}, False{}, 'a', False{}, False{}, '"', False{})
+    case 7n:
+      match c:
+        case '\\':
+          css_strip_comments_go(0n, s, acc ++ SCon{c, SNil{}}, False{}, 'a', False{}, False{}, '\'', True{})
+        case '\'':
+          css_strip_comments_go(0n, s, acc ++ SCon{c, SNil{}}, False{}, 'a', False{}, False{}, 'a', False{})
+        case _:
+          css_strip_comments_go(0n, s, acc ++ SCon{c, SNil{}}, False{}, 'a', False{}, False{}, '\'', False{})
+    case 8n:
+      match c:
+        case '"':
+          css_strip_comments_go(0n, s, acc ++ SCon{c, SNil{}}, False{}, 'a', False{}, False{}, '"', False{})
+        case '\'':
+          css_strip_comments_go(0n, s, acc ++ SCon{c, SNil{}}, False{}, 'a', False{}, False{}, '\'', False{})
+        case _:
+          css_strip_comments_go(9n, s, acc, inside, c, open, close, quote, escaped)
+    case _:
+      match open:
+        case True{}:
+          css_strip_comments_go(0n, String.drop(s, 1n), acc, True{}, 'a', False{}, False{}, 'a', False{})
+        case False{}:
+          css_strip_comments_go(0n, s, acc ++ SCon{c, SNil{}}, False{}, 'a', False{}, False{}, 'a', False{})
 def css_strip_comments(+css: String) -> String:
-  css_strip_comments_go(0n, css, "", False{}, 'a', False{}, False{})
+  css_strip_comments_go(0n, css, "", False{}, 'a', False{}, False{}, 'a', False{})
 
+@unsafe def css_take_var(sel: Nat, +s: String, +acc: String, depth: Nat) -> String & String:
+  match sel:
+    case 0n:
+      match s:
+        case SNil{}:
+          (acc, "")
+        case SCon{'(', t}:
+          css_take_var(0n, t, acc ++ "(", Nat.add(depth, 1n))
+        case SCon{')', t}:
+          css_take_var(1n, t, acc, depth)
+        case SCon{h, t}:
+          css_take_var(0n, t, acc ++ SCon{h, SNil{}}, depth)
+    case _:
+      match depth:
+        case 1n:
+          (acc ++ ")", s)
+        case _:
+          css_take_var(0n, s, acc ++ ")", Nat.sub(depth, 1n))
+def css_before_var(+css: String, +after: String) -> String:
+  String.take(css, Nat.sub(Nat.sub(String.length(css), String.length(after)), 4n))
 def css_minify_zero_values(+css: String) -> String:
   +a : String = css_module_replace_go(0n, css, "0px", "0", False{})
   +b : String = css_module_replace_go(0n, a, "0em", "0", False{})
   +c : String = css_module_replace_go(0n, b, "0rem", "0", False{})
   css_module_replace_go(0n, c, "0%", "0", False{})
-
-def css_minify(+css: String) -> String:
-  +comments : String = css_strip_comments(css)
-  +lines : String = css_module_replace_go(0n, comments, "\r", "", False{})
+def css_minify_text_plain(+css: String) -> String:
+  +lines : String = css_module_replace_go(0n, css, "\r", "", False{})
   +tabs : String = css_module_replace_go(0n, lines, "\t", " ", False{})
   +spaces : String = css_minify_spaces_go(0n, tabs, False{})
   +brace0 : String = css_minify_pair(spaces, "{")
@@ -4494,6 +4642,80 @@ def css_minify(+css: String) -> String:
   +greater : String = css_minify_pair(comma, ">")
   +zero : String = css_minify_zero_values(greater)
   css_module_replace_go(0n, zero, "\n", "", False{})
+@unsafe def css_take_quoted(sel: Nat, +s: String, +acc: String, quote: Char, escaped: Bool, c: Char) -> String & String:
+  match sel:
+    case 0n:
+      match s:
+        case SNil{}:
+          (acc, "")
+        case SCon{+h, t}:
+          css_take_quoted(1n, t, acc, quote, escaped, h)
+    case 1n:
+      match escaped:
+        case True{}:
+          css_take_quoted(0n, s, acc ++ SCon{c, SNil{}}, quote, False{}, 'a')
+        case False{}:
+          css_take_quoted(2n, s, acc, quote, False{}, c)
+    case 2n:
+      match quote:
+        case '"':
+          css_take_quoted(3n, s, acc, quote, False{}, c)
+        case '\'':
+          css_take_quoted(4n, s, acc, quote, False{}, c)
+        case _:
+          (acc, s)
+    case 3n:
+      match c:
+        case '\\':
+          css_take_quoted(0n, s, acc ++ SCon{c, SNil{}}, '"', True{}, 'a')
+        case '"':
+          (acc ++ SCon{c, SNil{}}, s)
+        case _:
+          css_take_quoted(0n, s, acc ++ SCon{c, SNil{}}, '"', False{}, 'a')
+    case _:
+      match c:
+        case '\\':
+          css_take_quoted(0n, s, acc ++ SCon{c, SNil{}}, '\'', True{}, 'a')
+        case '\'':
+          (acc ++ SCon{c, SNil{}}, s)
+        case _:
+          css_take_quoted(0n, s, acc ++ SCon{c, SNil{}}, '\'', False{}, 'a')
+@unsafe def css_minify_text_go(sel: Nat, +css: String, +acc: String, +plain: String, pair: String & String) -> String:
+  match sel:
+    case 0n:
+      match css:
+        case SNil{}:
+          acc ++ css_minify_text_plain(plain)
+        case SCon{'"', t}:
+          +quoted : String & String = css_take_quoted(0n, t, "\"", '"', False{}, 'a')
+          css_minify_text_go(1n, "", acc, plain, quoted)
+        case SCon{'\'', t}:
+          +quoted : String & String = css_take_quoted(0n, t, "'", '\'', False{}, 'a')
+          css_minify_text_go(1n, "", acc, plain, quoted)
+        case SCon{+h, t}:
+          css_minify_text_go(0n, t, acc, plain ++ SCon{h, SNil{}}, ("", ""))
+    case _:
+      (quoted, +rest) = pair
+      css_minify_text_go(0n, rest, acc ++ css_minify_text_plain(plain) ++ quoted, "", ("", ""))
+def css_minify_text(+css: String) -> String:
+  css_minify_text_go(0n, css, "", "", ("", ""))
+@unsafe def css_minify_protected(sel: Nat, +css: String, +acc: String, +after: String, pair: String & String, has_var: Bool) -> String:
+  match sel:
+    case 0n:
+      match has_var:
+        case False{}:
+          acc ++ css_minify_text(css)
+        case True{}:
+          css_minify_protected(1n, css, acc, drop_until_key(css, "var("), ("", ""), True{})
+    case 1n:
+      +next : String & String = css_take_var(0n, after, "var(", 1n)
+      css_minify_protected(2n, css, acc, after, next, True{})
+    case _:
+      (body, +rest) = pair
+      css_minify_protected(0n, rest, acc ++ css_minify_text(css_before_var(css, after)) ++ body, "", ("", ""), String.contains(rest, "var("))
+def css_minify(+css: String) -> String:
+  +stripped : String = css_strip_comments(css)
+  css_minify_protected(0n, stripped, "", "", ("", ""), String.contains(stripped, "var("))
 
 def css_minify_kind(+css: String, minify: Bool) -> String:
   match minify:
@@ -4505,22 +4727,102 @@ def css_minify_kind(+css: String, minify: Bool) -> String:
 def emit_data_value(+file: String, +value: String) -> String:
   "var __knot_data_values = __knot_data_values || Object.create(null);\n__knot_data_values[" ++ Compiler.json_str(file) ++ "] = " ++ value ++ ";\n"
 
-def emit_json_status(+file: String, +raw: String, status: String) -> IO(String):
-  match status:
+def data_code_span(+status: String, spanned: Bool) -> String:
+  match spanned:
+    case True{}:
+      take_until_tab(status, "")
+    case False{}:
+      status
+def data_code(+status: String) -> String:
+  data_code_span(status, String.contains(status, "\t"))
+def data_phrase(+code: String) -> String:
+  match code:
+    case "data_number":
+      "number outside the finite safe range"
+    case "duplicate_key":
+      "duplicate structured data key"
+    case "data_schema":
+      "unsupported structured data schema"
+    case "resource_limit":
+      "structured data limit exceeded"
+    case "invalid_encoding":
+      "invalid UTF-8"
+    case _:
+      "invalid structured data"
+def data_location_pair(pair: List<&2, String> & List<&2, String>) -> String:
+  (line_parts, col_parts) = pair
+  ":" ++ split_field(1n, line_parts) ++ ":" ++ split_field(2n, col_parts)
+def data_location_fields(parts: List<&2, String>) -> String:
+  data_location_pair(list_dup(parts))
+def data_location_span(+status: String, spanned: Bool) -> String:
+  match spanned:
+    case False{}:
+      ""
+    case True{}:
+      data_location_fields(String.split(status, '\t'))
+def data_location(+status: String) -> String:
+  data_location_span(status, String.contains(status, "\t"))
+def data_text_phrase(+file: String, +located: String, pair: String & String) -> String:
+  (phrase_src, shown) = pair
+  "knot: " ++ file ++ data_location(located) ++ ": " ++ data_phrase(phrase_src) ++ " (" ++ shown ++ ")"
+def data_text_split(+file: String, pair: String & String) -> String:
+  (located, coded) = pair
+  data_text_phrase(file, located, str_dup(coded))
+def data_text(+file: String, +status: String) -> String:
+  data_text_split(file, str_dup(status))
+def data_json_from_parts(+file: String, pair: List<&2, String> & List<&2, String>) -> String:
+  (code_parts, phrase_parts) = pair
+  "{\"version\":1,\"chain\":[],\"code\":" ++ Compiler.json_str(split_head(code_parts)) ++ ",\"generation\":null,\"identity\":{\"kind\":\"project\",\"value\":" ++ Compiler.json_str(file) ++ "},\"location\":null,\"message\":" ++ Compiler.json_str(data_phrase(split_head(phrase_parts))) ++ ",\"phase\":\"load\",\"related\":[],\"severity\":\"error\",\"suggestion\":null}"
+def data_json_located(+file: String, +parts: List<&2, String>) -> String:
+  data_json_from_parts(file, list_dup(parts))
+def data_json_plain(+file: String, pair: String & String) -> String:
+  (code, phrase) = pair
+  "{\"version\":1,\"chain\":[],\"code\":" ++ Compiler.json_str(code) ++ ",\"generation\":null,\"identity\":{\"kind\":\"project\",\"value\":" ++ Compiler.json_str(file) ++ "},\"location\":null,\"message\":" ++ Compiler.json_str(data_phrase(phrase)) ++ ",\"phase\":\"load\",\"related\":[],\"severity\":\"error\",\"suggestion\":null}"
+def data_json_record(+file: String, +status: String, spanned: Bool) -> String:
+  match spanned:
+    case False{}:
+      data_json_plain(file, str_dup(status))
+    case True{}:
+      data_json_located(file, String.split(status, '\t'))
+def data_fail_known(+file: String, +status: String, json: Bool, spanned: Bool) -> IO(String):
+  match json:
+    case True{}:
+      IO.die(String, 2, data_json_record(file, status, spanned))
+    case False{}:
+      IO.die(String, 2, data_text(file, status))
+def data_fail_pair(+file: String, json: Bool, pair: String & String) -> IO(String):
+  (flagged, full) = pair
+  data_fail_known(file, full, json, String.contains(flagged, "\t"))
+def data_fail_mode(+file: String, +status: String, json: Bool) -> IO(String):
+  data_fail_pair(file, json, str_dup(status))
+def data_fail_selected(+file: String, +status: String) -> IO(String):
+  do IO<String>:
+    json : Bool <- file_exists(".knot/diagnostics-json")
+    data_fail_mode(file, status, json)
+def data_clear_kind(+file: String, +status: String, clear: Bool) -> IO(String):
+  match clear:
+    case False{}:
+      data_fail_selected(file, status)
+    case True{}:
+      do IO<String>:
+        +dir : String <- read_text(".knot/clear-on-error")
+        u : Unit <- IO.try(Unit, Fs.remove_dir(dir))
+        data_fail_selected(file, status)
+def data_fail(+file: String, +status: String) -> IO(String):
+  do IO<String>:
+    clear : Bool <- file_exists(".knot/clear-on-error")
+    data_clear_kind(file, status, clear)
+def emit_json_status_code(+file: String, +raw: String, +status: String, +code: String) -> IO(String):
+  match code:
     case "ok":
       IO.pure(String, emit_data_value(file, "JSON.parse(" ++ Compiler.json_str(raw) ++ ")"))
-    case "data_number":
-      IO.die(String, 2, "knot: JSON number outside the finite safe range (data_number)")
-    case "duplicate_key":
-      IO.die(String, 2, "knot: duplicate JSON key (duplicate_key)")
-    case "data_schema":
-      IO.die(String, 2, "knot: unsupported structured data schema (data_schema)")
-    case "resource_limit":
-      IO.die(String, 2, "knot: JSON data limit exceeded (resource_limit)")
-    case "invalid_encoding":
-      IO.die(String, 2, "knot: invalid JSON UTF-8 (invalid_encoding)")
     case _:
-      IO.die(String, 2, "knot: invalid JSON data (syntax_error)")
+      data_fail(file, status)
+def emit_json_status_pair(+file: String, +raw: String, pair: String & String) -> IO(String):
+  (coded, full) = pair
+  emit_json_status_code(file, raw, full, data_code(coded))
+def emit_json_status(+file: String, +raw: String, status: String) -> IO(String):
+  emit_json_status_pair(file, raw, str_dup(status))
 
 def emit_json_checked(+file: String, +raw: String, validated: Result<&1, &1, U32 & String, String>) -> IO(String):
   match validated:
@@ -4928,7 +5230,15 @@ def asset_hash_prefix(+file: String) -> IO(String):
   do IO<String>:
     +digest : String <- IO.try(String, Hash.sha256_b64(file))
     return asset_hash_go(0n, digest, 8n, "", 'a', False{})
-
+def asset_dir_kind(+parent: String, top: Bool) -> String:
+  match top:
+    case True{}:
+      ""
+    case False{}:
+      parent ++ "/"
+def asset_dir(+file: String) -> String:
+  +parent : String = Compiler.dirname(file)
+  asset_dir_kind(parent, Bool.or(String.eq(parent, "."), String.is_empty(parent)))
 def asset_template_kind(+file: String, +template: String, +hash: String, empty: Bool) -> String:
   match empty:
     case True{}:
@@ -4942,7 +5252,7 @@ def asset_template_kind(+file: String, +template: String, +hash: String, empty: 
       +name1 : String = css_module_replace_go(0n, name0, "[ext]", ext, False{})
       +name2 : String = css_module_replace_go(0n, name1, "[hash:8]", hash, False{})
       +name3 : String = css_module_replace_go(0n, name2, "[hash]", hash, False{})
-      css_module_replace_go(0n, name3, "[dir]", Compiler.dirname(file), False{})
+      css_module_replace_go(0n, name3, "[dir]", asset_dir(file), False{})
 
 def asset_template_name(+file: String, +template: String, +hash: String) -> String:
   asset_template_kind(file, template, hash, String.is_empty(template))
@@ -5134,38 +5444,69 @@ def css_map_mappings_composed(+files: List<&2, String>, +css: String) -> IO(Stri
   css_map_composed_go(0n, css_only_files(files), Nil{}, Nil{}, 0, 0, 0, 0, List.length(&2, String, String.lines(css)), "", True{})
 
 
-def css_map_body(+out: String, files: List<&2, String>, +mappings: String) -> String:
-  "{\"version\":3,\"file\":" ++ Compiler.json_str(Compiler.basename(css_path(out))) ++ ",\"sources\":[" ++ css_map_sources_go(0n, files, "", "", True{}, False{}) ++ "],\"names\":[],\"mappings\":" ++ Compiler.json_str(mappings) ++ "}"
-
-def css_map_css_kind(+css: String, +out: String, +map: String, +mode: String) -> String:
+def css_map_body(+file: String, files: List<&2, String>, +mappings: String) -> String:
+  "{\"version\":3,\"file\":" ++ Compiler.json_str(file) ++ ",\"sources\":[" ++ css_map_sources_go(0n, files, "", "", True{}, False{}) ++ "],\"names\":[],\"mappings\":" ++ Compiler.json_str(mappings) ++ "}"
+def css_map_css_kind(+css: String, +file: String, +map: String, +mode: String) -> String:
   match mode:
     case "inline":
       css ++ "\n/*# sourceMappingURL=data:application/json;base64," ++ Compiler.b64_encode(map) ++ " */\n"
     case "linked":
-      css ++ "\n/*# sourceMappingURL=" ++ Compiler.basename(css_path(out)) ++ ".map */\n"
+      css ++ "\n/*# sourceMappingURL=" ++ file ++ ".map */\n"
     case "external":
-      css ++ "\n/*# sourceMappingURL=" ++ Compiler.basename(css_path(out)) ++ ".map */\n"
+      css ++ "\n/*# sourceMappingURL=" ++ file ++ ".map */\n"
     case _:
       css
+def css_map_css_pair(+css: String, pair: String & String, +mode: String, files: List<&2, String>, +mappings: String) -> String:
+  (file, file_copy) = pair
+  css_map_css_kind(css, file, css_map_body(file_copy, files, mappings), mode)
+def css_map_css(+css: String, +file: String, +mode: String, files: List<&2, String>, +mappings: String) -> String:
+  css_map_css_pair(css, str_dup(file), mode, files, mappings)
 
-def css_map_css(+css: String, +out: String, +mode: String, files: List<&2, String>, +mappings: String) -> String:
-  css_map_css_kind(css, out, css_map_body(out, files, mappings), mode)
-
+def css_template_apply(+out: String, +template: String) -> String:
+  +base : String = Compiler.basename(css_path(out))
+  +stem0 : String = css_take_until_char(base, '.')
+  +stem : String = String.take(stem0, Nat.sub(String.length(stem0), 1n))
+  +named0 : String = css_module_replace_go(0n, template, "[name]", stem, False{})
+  +named1 : String = css_module_replace_go(0n, named0, "[ext]", "css", False{})
+  +named2 : String = css_module_replace_go(0n, named1, "[dir]", asset_dir(out), False{})
+  Compiler.join_rel(Compiler.dirname(out), named2)
+def css_written_read(+out: String, custom: Bool) -> IO(String):
+  match custom:
+    case False{}:
+      IO.pure(String, css_path(out))
+    case True{}:
+      do IO<String>:
+        +template : String <- read_text(".knot/css-naming")
+        return css_template_apply(out, template)
+def css_written_path(+out: String) -> IO(String):
+  do IO<String>:
+    custom : Bool <- file_exists(".knot/css-naming")
+    css_written_read(out, custom)
+def css_path_base(pair: String & String) -> String & String:
+  (path, copy) = pair
+  (path, Compiler.basename(copy))
+def write_text_atomic_named(pair: String & String, +css: String, +mode: String, files: List<&2, String>, +mappings: String) -> IO(Unit):
+  (path, file) = pair
+  write_text_atomic(path, css_map_css(css, file, mode, files, mappings))
 def write_css_if(+out: String, +css: String, empty: Bool, +mode: String, +files: List<&2, String>) -> IO(Unit):
   match empty:
     case True{}:
       IO.pure(Unit, Unit{})
     case False{}:
       do IO<Unit>:
+        +path : String <- css_written_path(out)
         +mappings : String <- css_map_mappings_composed(files, css)
-        write_text_atomic(css_path(out), css_map_css(css, out, mode, files, mappings))
-
+        write_text_atomic_named(css_path_base(str_dup(path)), css, mode, files, mappings)
+def write_css_map_named(pair: String & String, files: List<&2, String>, +mappings: String) -> IO(Unit):
+  (path, file) = pair
+  write_text_atomic(path ++ ".map", css_map_body(file, files, mappings))
 def write_css_map_kind(+out: String, +css: String, +files: List<&2, String>, +mode: String, external: Bool) -> IO(Unit):
   match external:
     case True{}:
       do IO<Unit>:
+        +path : String <- css_written_path(out)
         +mappings : String <- css_map_mappings_composed(files, css)
-        write_text_atomic(css_path(out) ++ ".map", css_map_body(out, files, mappings))
+        write_css_map_named(css_path_base(str_dup(path)), files, mappings)
     case False{}:
       IO.pure(Unit, Unit{})
 
@@ -5466,15 +5807,46 @@ def entry_template_parts(+file: String, html: Bool) -> String & String:
       +base : String = Compiler.basename(Compiler.js_path(file))
       entry_template_parts_js(base, String.ends_with(base, ".mjs"))
 
-def entry_template_name_kind(+template: String, +hash: String, parts: String & String) -> String:
-  (stem, ext) = parts
+def strip_root_kind(+file: String, +root: String, hit: Bool) -> String:
+  match hit:
+    case True{}:
+      String.drop(file, Nat.add(String.length(root), 1n))
+    case False{}:
+      file
+def strip_root(+file: String, +root: String) -> String:
+  strip_root_kind(file, root, Bool.and(Bool.not(String.is_empty(root)), String.starts_with(file, root ++ "/")))
+def entry_parent_kind(+parent: String, top: Bool) -> String:
+  match top:
+    case True{}:
+      ""
+    case False{}:
+      parent ++ "/"
+def entry_parent_dir(+file: String) -> String:
+  +parent : String = Compiler.dirname(file)
+  entry_parent_kind(parent, Bool.or(String.eq(parent, "."), String.is_empty(parent)))
+def entry_name_ext_present(+name: String) -> Bool:
+  Bool.or(String.ends_with(name, ".js"), Bool.or(String.ends_with(name, ".mjs"), Bool.or(String.ends_with(name, ".cjs"), String.ends_with(name, ".html"))))
+def entry_template_finish(+name: String, +ext: String, keep: Bool) -> String:
+  match keep:
+    case True{}:
+      name
+    case False{}:
+      name ++ "." ++ ext
+def entry_template_with_ext(+template: String, +hash: String, +stem: String, ext_pair: String & String, +dir: String) -> String:
+  (ext, ext_copy) = ext_pair
+  +keep : Bool = Bool.or(String.contains(template, "[ext]"), entry_name_ext_present(template))
   +name0 : String = css_module_replace_go(0n, template, "[name]", stem, False{})
   +name1 : String = css_module_replace_go(0n, name0, "[ext]", ext, False{})
   +name2 : String = css_module_replace_go(0n, name1, "[hash]", hash, False{})
-  css_module_replace_go(0n, name2, "[dir]", "", False{})
-
+  +named : String = css_module_replace_go(0n, name2, "[dir]", dir, False{})
+  entry_template_finish(named, ext_copy, keep)
+def entry_template_name_kind(+template: String, +hash: String, parts: String & String, +dir: String) -> String:
+  (stem, ext0) = parts
+  entry_template_with_ext(template, hash, stem, str_dup(ext0), dir)
+def entry_template_name_root(+file: String, +template: String, +hash: String, html: Bool, +root: String) -> String:
+  entry_template_name_kind(template, hash, entry_template_parts(file, html), entry_parent_dir(strip_root(file, root)))
 def entry_template_name(+file: String, +template: String, +hash: String, html: Bool) -> String:
-  entry_template_name_kind(template, hash, entry_template_parts(file, html))
+  entry_template_name_root(file, template, hash, html, "")
 
 def entry_template_hash_kind(+file: String, used: Bool) -> IO(String):
   match used:
@@ -5614,7 +5986,7 @@ def dyn_entry_output_kind(+file: String, +outdir: String, +format: String, +temp
     case False{}:
       do IO<String>:
         +hash : String <- entry_template_hash(file, template)
-        +named : String = entry_template_name(file, template, hash, False{})
+        +named : String = entry_template_name_root(file, template, hash, False{}, early_format_marker(format, "root"))
         return node_output_name(Compiler.join_rel(outdir, named), format, String.contains(template, "[ext]"))
 
 def dyn_entry_output(+file: String, +outdir: String, +format: String) -> IO(String):
@@ -5638,7 +6010,7 @@ def dyn_external_root_kind(+importer: String, +out: String, +format: String, +te
     case False{}:
       do IO<String>:
         +hash : String <- entry_template_hash(importer, template)
-        +named : String = entry_template_name(importer, template, hash, False{})
+        +named : String = entry_template_name_root(importer, template, hash, False{}, early_format_marker(format, "root"))
         +actual : String = node_output_name(named, format, String.contains(template, "[ext]"))
         return String.take(out, Nat.sub(String.length(out), Nat.add(String.length(actual), 1n)))
 
@@ -5800,6 +6172,36 @@ def bundle_preflight(+file: String, +src: String, +out: String, +format: String)
     bundle_preflight_specs(file, Compiler.requires_of(src))
 
 
+def graph_js_file(+file: String) -> Bool:
+  Bool.or(String.ends_with(file, ".ts"), Bool.or(String.ends_with(file, ".tsx"), Bool.or(String.ends_with(file, ".js"), Bool.or(String.ends_with(file, ".jsx"), Bool.or(String.ends_with(file, ".mjs"), String.ends_with(file, ".cjs"))))))
+def graph_dyn_join(+edge: String, +more: String, edge_empty: Bool, more_empty: Bool) -> String:
+  match edge_empty:
+    case True{}:
+      more
+    case False{}:
+      match more_empty:
+        case True{}:
+          edge
+        case False{}:
+          edge ++ "," ++ more
+@unsafe def graph_dyn_emit(sel: Nat, files: List<&2, String>, +out: String, +public: String, +sm: String, +format: String, +file: String, js: Bool) -> IO(Unit):
+  match sel:
+    case 0n:
+      match files:
+        case Nil{}:
+          IO.pure(Unit, Unit{})
+        case Con{+f, rest}:
+          graph_dyn_emit(1n, rest, out, public, sm, format, f, graph_js_file(f))
+    case _:
+      match js:
+        case False{}:
+          graph_dyn_emit(0n, files, out, public, sm, format, "", False{})
+        case True{}:
+          do IO<Unit>:
+            raw : String <- read_text(file)
+            u : Unit <- emit_dyn(file, out, Compiler.dyn_imports_of(raw), public, sm, format)
+            graph_dyn_emit(0n, files, out, public, sm, format, "", False{})
+
 def bundle_write_dyn(+file: String, +out: String, +src: String, +public: String, +sm: String, +format: String) -> IO(Unit):
   do IO<Unit>:
     u : Unit <- emit_dyn(file, out, Compiler.dyn_imports_of(src), public, sm, format)
@@ -5830,16 +6232,197 @@ def meta_css_field(+out: String, +css: String, empty: Bool, +mode: String) -> St
     case False{}:
       ",\"css\":" ++ Compiler.json_str(css_path(out)) ++ manifest_source_map_field(css_path(out), mode)
 
+def removed_piece(+file: String, +name: String) -> String:
+  "{\"file\":" ++ Compiler.json_str(file) ++ ",\"name\":" ++ Compiler.json_str(name) ++ ",\"reason\":\"unused-export\"}"
+def removed_cat_kind(+acc: String, +piece: String, piece_empty: Bool, acc_empty: Bool) -> String:
+  match piece_empty:
+    case True{}:
+      acc
+    case False{}:
+      match acc_empty:
+        case True{}:
+          piece
+        case False{}:
+          acc ++ "," ++ piece
+def removed_cat(+acc: String, +piece: String) -> String:
+  removed_cat_kind(acc, piece, String.is_empty(piece), String.is_empty(acc))
+@unsafe def removed_join(sel: Nat, names: List<&2, String>, +keep: String, +file: String, +acc: String, +name: String, hit: Bool, empty: Bool) -> String:
+  match sel:
+    case 0n:
+      match names:
+        case Nil{}:
+          acc
+        case Con{+h, t}:
+          removed_join(1n, t, keep, file, acc, h, String.contains(keep, "\n" ++ h ++ "\n"), String.is_empty(acc))
+    case _:
+      match hit:
+        case True{}:
+          removed_join(0n, names, keep, file, acc, "", False{}, False{})
+        case False{}:
+          removed_join(0n, names, keep, file, removed_cat_kind(acc, removed_piece(file, name), False{}, empty), "", False{}, False{})
+def removed_names(names: List<&2, String>, +keep: String, +file: String) -> String:
+  removed_join(0n, names, keep, file, "", "", False{}, True{})
+def removed_is_code(+file: String) -> Bool:
+  Bool.or(String.ends_with(file, ".ts"), Bool.or(String.ends_with(file, ".tsx"), Bool.or(String.ends_with(file, ".js"), Bool.or(String.ends_with(file, ".jsx"), Bool.or(String.ends_with(file, ".mjs"), String.ends_with(file, ".cjs"))))))
+def removed_skip(+file: String, +entry: String) -> Bool:
+  Bool.or(String.eq(file, entry), Bool.not(removed_is_code(file)))
+def keep_text(xs: List<&2, String>) -> String:
+  match xs:
+    case Nil{}:
+      "\n"
+    case Con{+h, t}:
+      "\n" ++ h ++ keep_text(t)
+def paths_encode(files: List<&2, String>) -> String:
+  match files:
+    case Nil{}:
+      ""
+    case Con{+h, Nil{}}:
+      h
+    case Con{+h, t}:
+      h ++ "\n" ++ paths_encode(t)
+def removed_of_file(+file: String, +keep: String, skip: Bool) -> IO(String):
+  match skip:
+    case True{}:
+      IO.pure(String, "")
+    case False{}:
+      do IO<String>:
+        raw : String <- read_text(file)
+        src : String <- normalize_source(raw)
+        return removed_names(Compiler.exports_of(src), keep, file)
+def removed_files_go(files: List<&2, String>, +keep: String, +entry: String) -> IO(String):
+  match files:
+    case Nil{}:
+      IO.pure(String, "")
+    case Con{+f, rest}:
+      do IO<String>:
+        piece : String <- removed_of_file(f, keep, removed_skip(f, entry))
+        more : String <- removed_files_go(rest, keep, entry)
+        return removed_cat(piece, more)
+def meta_removed(+encoded: String, +entry: String) -> IO(String):
+  do IO<String>:
+    keep : List<&2, String> <- collect_keep(String.lines(encoded))
+    body : String <- removed_files_go(String.lines(encoded), keep_text(keep), entry)
+    return ",\"removed\":[" ++ body ++ "]"
+
+@unsafe def find_go(sel: Nat, +src: String, +needle: String, +i: Nat, hit: Bool, fuel: Nat) -> Nat:
+  match sel:
+    case 0n:
+      match fuel:
+        case 0n:
+          0n
+        case 1n+n:
+          find_go(1n, src, needle, i, String.starts_with(String.drop(src, i), needle), n)
+    case _:
+      match hit:
+        case True{}:
+          i
+        case False{}:
+          find_go(0n, src, needle, Nat.add(i, 1n), False{}, fuel)
+def find_index(+src: String, +needle: String) -> Nat:
+  find_go(0n, src, needle, 0n, False{}, Nat.add(String.length(src), 1n))
+def find_hit(+src: String, +needle: String, +i: Nat) -> Bool:
+  String.starts_with(String.drop(src, i), needle)
+def import_record_kind(+spec: String, +start: Nat, +end: Nat, hit: Bool) -> String:
+  match hit:
+    case True{}:
+      "{\"specifier\":" ++ Compiler.json_str(spec) ++ ",\"start\":" ++ Nat.show(start) ++ ",\"end\":" ++ Nat.show(end) ++ "}"
+    case False{}:
+      ""
+def import_record_quoted(+spec: String, +src: String, +quoted: String) -> String:
+  +i : Nat = find_index(src, quoted)
+  import_record_kind(spec, i, Nat.add(i, String.length(quoted)), find_hit(src, quoted, i))
+def import_record_single(+spec: String, +src: String) -> String:
+  import_record_quoted(spec, src, "'" ++ spec ++ "'")
+def import_record_pick(+double: String, +spec: String, +src: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      import_record_single(spec, src)
+    case False{}:
+      double
+def import_record(+spec: String, +src: String) -> String:
+  import_record_pick(import_record_quoted(spec, src, "\"" ++ spec ++ "\""), spec, src, String.is_empty(import_record_quoted(spec, src, "\"" ++ spec ++ "\"")))
+def import_records_go(specs: List<&2, String>, +src: String) -> String:
+  match specs:
+    case Nil{}:
+      ""
+    case Con{+h, t}:
+      removed_cat(import_record(h, src), import_records_go(t, src))
+
+def export_bool(kept: Bool) -> String:
+  match kept:
+    case True{}:
+      "true"
+    case False{}:
+      "false"
+def export_start_or(+src: String, +name: String, +prefix: String, +next: Nat, miss: Bool) -> Nat:
+  match miss:
+    case True{}:
+      next
+    case False{}:
+      Nat.add(find_index(src, prefix ++ name), String.length(prefix))
+def export_start(+src: String, +name: String) -> Nat:
+  export_start_or(src, name, "function ", export_start_or(src, name, "const ", export_start_or(src, name, "let ", export_start_or(src, name, "class ", export_start_or(src, name, "var ", 0n, Bool.not(String.contains(src, "var " ++ name))), Bool.not(String.contains(src, "class " ++ name))), Bool.not(String.contains(src, "let " ++ name))), Bool.not(String.contains(src, "const " ++ name))), Bool.not(String.contains(src, "function " ++ name)))
+def export_piece(+file: String, +name: String, +src: String, +keep: String) -> String:
+  +start : Nat = export_start(src, name)
+  "{\"file\":" ++ Compiler.json_str(file) ++ ",\"name\":" ++ Compiler.json_str(name) ++ ",\"start\":" ++ Nat.show(start) ++ ",\"end\":" ++ Nat.show(Nat.add(start, String.length(name))) ++ ",\"kept\":" ++ export_bool(String.contains(keep, "\n" ++ name ++ "\n")) ++ "}"
+def export_names_go(names: List<&2, String>, +file: String, +src: String, +keep: String) -> String:
+  match names:
+    case Nil{}:
+      ""
+    case Con{+h, t}:
+      removed_cat(export_piece(file, h, src, keep), export_names_go(t, file, src, keep))
+def export_of_file(+file: String, +keep: String, skip: Bool) -> IO(String):
+  match skip:
+    case True{}:
+      IO.pure(String, "")
+    case False{}:
+      do IO<String>:
+        raw : String <- read_text(file)
+        src : String <- normalize_source(raw)
+        names : List<&2, String> = Compiler.exports_of(src)
+        raw2 : String <- read_text(file)
+        src2 : String <- normalize_source(raw2)
+        return export_names_go(names, file, src2, keep)
+def export_files_go(files: List<&2, String>, +keep: String, +entry: String) -> IO(String):
+  match files:
+    case Nil{}:
+      IO.pure(String, "")
+    case Con{+f, rest}:
+      do IO<String>:
+        piece : String <- export_of_file(f, keep, removed_skip(f, entry))
+        more : String <- export_files_go(rest, keep, entry)
+        return removed_cat(piece, more)
+def meta_exports(+encoded: String, +entry: String) -> IO(String):
+  do IO<String>:
+    keep : List<&2, String> <- collect_keep(String.lines(encoded))
+    body : String <- export_files_go(String.lines(encoded), keep_text(keep), entry)
+    return ",\"exports\":[" ++ body ++ "]"
+def css_record(+spec: String, +src: String, css: Bool) -> String:
+  match css:
+    case True{}:
+      import_record(spec, src)
+    case False{}:
+      ""
+def css_records_go(specs: List<&2, String>, +src: String) -> String:
+  match specs:
+    case Nil{}:
+      ""
+    case Con{+h, t}:
+      removed_cat(css_record(h, src, String.ends_with(h, ".css")), css_records_go(t, src))
+
 def meta_write_none(none: Bool, +meta: String, +file: String, +out: String, +src: String, +js: String, +css: String, files: List<&2, String>, +mode: String) -> IO(Unit):
   match none:
     case True{}:
       IO.pure(Unit, Unit{})
     case False{}:
       do IO<Unit>:
-        inputs : String <- meta_inputs_go(files)
+        +encoded : String = paths_encode(files)
+        inputs : String <- meta_inputs_go(String.lines(encoded))
         +digest : String <- IO.try(String, Hash.sha256_b64(out))
-        +output : String = Compiler.json_str(out) ++ ":{\"kind\":\"js\",\"bytes\":" ++ Nat.show(String.length(js)) ++ ",\"digest\":" ++ Compiler.json_str(digest) ++ ",\"entry\":" ++ Compiler.json_str(file) ++ ",\"imports\":" ++ Compiler.json_list(Compiler.imports_of(src)) ++ ",\"exports\":" ++ Compiler.json_list(Compiler.exports_of(src)) ++ meta_css_field(out, css, String.is_empty(css), mode) ++ manifest_source_map_field(out, mode) ++ "}"
-        +body : String = "{\"inputs\":{" ++ inputs ++ "},\"outputs\":{" ++ output ++ "}}"
+        +removed : String <- meta_removed(encoded, file)
+        +exports : String <- meta_exports(encoded, file)
+        +output : String = Compiler.json_str(out) ++ ":{\"kind\":\"js\",\"bytes\":" ++ Nat.show(String.length(js)) ++ ",\"digest\":" ++ Compiler.json_str(digest) ++ ",\"entry\":" ++ Compiler.json_str(file) ++ ",\"imports\":" ++ Compiler.json_list(Compiler.imports_of(src)) ++ ",\"importRecords\":[" ++ import_records_go(Compiler.imports_of(src), src) ++ "],\"cssRecords\":[" ++ css_records_go(Compiler.imports_of(src), src) ++ "],\"exports\":" ++ Compiler.json_list(Compiler.exports_of(src)) ++ meta_css_field(out, css, String.is_empty(css), mode) ++ manifest_source_map_field(out, mode) ++ "}"
+        +body : String = "{\"inputs\":{" ++ inputs ++ "},\"outputs\":{" ++ output ++ "}" ++ removed ++ exports ++ "}"
         write_text_atomic(meta, body)
 
 def manifest_css_kind(+out: String, +css: String, +digest: String, empty: Bool, +mode: String) -> String:
@@ -5901,18 +6484,44 @@ def manifest_external_edge_json(+importer: String, +out: String, +spec: String, 
   (entry, output) = target
   manifest_external_edge_fields(importer, out, spec, format, entry, output)
 
+def dyn_range_kind(+start: Nat, +end: Nat, hit: Bool) -> String:
+  match hit:
+    case True{}:
+      ",\"range\":[" ++ Nat.show(start) ++ "," ++ Nat.show(end) ++ "]"
+    case False{}:
+      ""
+def dyn_range_quoted(+src: String, +quoted: String) -> String:
+  +start : Nat = find_index(src, quoted)
+  dyn_range_kind(start, Nat.add(start, String.length(quoted)), find_hit(src, quoted, start))
+def dyn_range_pick(+double: String, +src: String, +spec: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      dyn_range_quoted(src, "'" ++ spec ++ "'")
+    case False{}:
+      double
+def dyn_range_json(+src: String, +spec: String) -> String:
+  dyn_range_pick(dyn_range_quoted(src, "\"" ++ spec ++ "\""), src, spec, String.is_empty(dyn_range_quoted(src, "\"" ++ spec ++ "\"")))
+def dyn_range_of(+importer: String, +spec: String) -> IO(String):
+  do IO<String>:
+    raw : String <- read_text(importer)
+    return dyn_range_json(raw, spec)
+def edge_with_range(+edge: String, +range: String) -> String:
+  String.take(edge, Nat.sub(String.length(edge), 1n)) ++ range ++ "}"
+
 def manifest_dynamic_edge_kind(+importer: String, +out: String, +spec: String, +format: String, external: Bool) -> IO(String):
   match external:
     case True{}:
       do IO<String>:
         target : String & String <- dyn_external_output(importer, spec, dyn_entries(format), out, format)
-        return manifest_external_edge_json(importer, out, spec, format, target)
+        +range : String <- dyn_range_of(importer, spec)
+        return edge_with_range(manifest_external_edge_json(importer, out, spec, format, target), range)
     case False{}:
       do IO<String>:
         +path : String <- resolve_open(importer, spec)
         +got : String <- IO.try(String, Hash.sha256_b64(path))
         +name : String = dyn_chunk_name(got, format)
-        return "{\"importer\":" ++ Compiler.json_str(Compiler.basename(importer)) ++ ",\"source\":" ++ Compiler.json_str(spec) ++ ",\"resolved\":" ++ Compiler.json_str(path) ++ ",\"output\":" ++ Compiler.json_str(name) ++ ",\"publicUrl\":" ++ Compiler.json_str(dyn_public_ref(early_format_marker(format, "public"), name)) ++ ",\"lazy\":true,\"targetKind\":\"lazy-chunk\"}"
+        +range : String <- dyn_range_of(importer, spec)
+        return edge_with_range("{\"importer\":" ++ Compiler.json_str(Compiler.basename(importer)) ++ ",\"source\":" ++ Compiler.json_str(spec) ++ ",\"resolved\":" ++ Compiler.json_str(path) ++ ",\"output\":" ++ Compiler.json_str(name) ++ ",\"publicUrl\":" ++ Compiler.json_str(dyn_public_ref(early_format_marker(format, "public"), name)) ++ ",\"lazy\":true,\"targetKind\":\"lazy-chunk\"}", range)
 
 def manifest_dynamic_edge(+importer: String, +out: String, +spec: String, +format: String) -> IO(String):
   manifest_dynamic_edge_kind(importer, out, spec, format, dyn_external_hit(importer, spec, format))
@@ -5939,6 +6548,47 @@ def manifest_dynamic_imports(+importer: String, +out: String, specs: List<&2, St
     +edges : String <- manifest_dynamic_edges(importer, out, specs, format)
     return ",\"dynamicImports\":[" ++ edges ++ "]"
 
+@unsafe def graph_dyn_edges(sel: Nat, files: List<&2, String>, +out: String, +format: String, +file: String, js: Bool) -> IO(String):
+  match sel:
+    case 0n:
+      match files:
+        case Nil{}:
+          IO.pure(String, "")
+        case Con{+f, rest}:
+          graph_dyn_edges(1n, rest, out, format, f, graph_js_file(f))
+    case _:
+      match js:
+        case False{}:
+          graph_dyn_edges(0n, files, out, format, "", False{})
+        case True{}:
+          do IO<String>:
+            raw : String <- read_text(file)
+            +edge : String <- manifest_dynamic_edges(file, out, Compiler.dyn_imports_of(raw), format)
+            +more : String <- graph_dyn_edges(0n, files, out, format, "", False{})
+            return graph_dyn_join(edge, more, String.is_empty(edge), String.is_empty(more))
+@unsafe def graph_dyn_records(sel: Nat, files: List<&2, String>, +outdir: String, +mode: String, +format: String, +file: String, js: Bool) -> IO(String):
+  match sel:
+    case 0n:
+      match files:
+        case Nil{}:
+          IO.pure(String, "")
+        case Con{+f, rest}:
+          graph_dyn_records(1n, rest, outdir, mode, format, f, graph_js_file(f))
+    case _:
+      match js:
+        case False{}:
+          graph_dyn_records(0n, files, outdir, mode, format, "", False{})
+        case True{}:
+          do IO<String>:
+            raw : String <- read_text(file)
+            +part : String <- manifest_dyn(file, outdir, Compiler.dyn_imports_of(raw), mode, format)
+            +more : String <- graph_dyn_records(0n, files, outdir, mode, format, "", False{})
+            return part ++ more
+def graph_dynamic_imports(files: List<&2, String>, +out: String, +format: String) -> IO(String):
+  do IO<String>:
+    +edges : String <- graph_dyn_edges(0n, files, out, format, "", False{})
+    return ",\"dynamicImports\":[" ++ edges ++ "]"
+
 @unsafe def manifest_asset_go(sel: Nat, +files: List<&2, String>, +outdir: String, +file: String, asset: Bool, +template: String) -> IO(String):
   match sel:
     case 0n:
@@ -5962,10 +6612,10 @@ def manifest_dynamic_imports(+importer: String, +out: String, specs: List<&2, St
 def manifest_assets(+out: String, files: List<&2, String>, +template: String) -> IO(String):
   manifest_asset_go(0n, files, Compiler.dirname(out), "", False{}, template)
 
-def manifest_write(+manifest: String, +file: String, +out: String, +src: String, +js: String, +css: String, files: List<&2, String>, +template: String, +mode: String) -> IO(Unit):
+def manifest_write(+manifest: String, +file: String, +out: String, +src: String, +js: String, +css: String, +files: List<&2, String>, +template: String, +mode: String) -> IO(Unit):
   do IO<Unit>:
-    +dynamic : String <- manifest_dyn(file, Compiler.dirname(out), Compiler.dyn_imports_of(src), mode, "esm")
-    +dynamic_edges : String <- manifest_dynamic_imports(file, out, Compiler.dyn_imports_of(src), "esm")
+    +dynamic : String <- graph_dyn_records(0n, files, Compiler.dirname(out), mode, "esm", "", False{})
+    +dynamic_edges : String <- graph_dynamic_imports(files, out, "esm")
     +assets : String <- manifest_assets(out, files, template)
     +css_output : String <- manifest_css(out, css, String.is_empty(css), mode)
     +output_digest : String <- IO.try(String, Hash.sha256_b64(out))
@@ -6088,67 +6738,129 @@ def loader_supported(+loader: String) -> Bool:
     Bool.not(String.is_empty(loader)),
     Bool.and(
       Bool.not(String.is_empty(loader_extension(loader))),
-      Bool.or(String.ends_with(loader, "=jsonc"), Bool.or(String.ends_with(loader, "=text"), String.ends_with(loader, "=json")))))
-
+      Bool.or(
+        String.ends_with(loader, "=jsonc"),
+        Bool.or(
+          String.ends_with(loader, "=text"),
+          Bool.or(
+            String.ends_with(loader, "=json"),
+            Bool.or(
+              String.ends_with(loader, "=toml"),
+              Bool.or(
+                String.ends_with(loader, "=yaml"),
+                Bool.or(
+                  String.ends_with(loader, "=css"),
+                  Bool.or(
+                    String.ends_with(loader, "=file"),
+                    Bool.or(
+                      String.ends_with(loader, "=empty"),
+                      Bool.or(
+                        String.ends_with(loader, "=external"),
+                        Bool.or(
+                          String.ends_with(loader, "=js"),
+                          Bool.or(
+                            String.ends_with(loader, "=jsx"),
+                            Bool.or(String.ends_with(loader, "=ts"), Bool.or(String.ends_with(loader, "=tsx"), String.ends_with(loader, "=html"))))))))))))))))
 def loader_validate_kind(+loader: String, valid: Bool) -> IO(Unit):
   match valid:
     case True{}:
       IO.pure(Unit, Unit{})
     case False{}:
       IO.die(Unit, 2, "knot: unsupported loader " ++ loader ++ " (unsupported_loader)")
-
 def loader_validate(+format: String) -> IO(Unit):
   +loader : String = build_format_marker(format, "loader")
   loader_validate_kind(loader, Bool.or(String.is_empty(loader), loader_supported(loader)))
-
+def option_enum_validate(+key: String, +value: String, valid: Bool) -> IO(Unit):
+  match valid:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      IO.die(Unit, 2, "knot: invalid --" ++ key ++ " " ++ value ++ " (invalid_option)")
+def digits_text_rest(s: String) -> Bool:
+  match s:
+    case SNil{}:
+      True{}
+    case SCon{h, t}:
+      Bool.and(Char.is_digit(h), digits_text_rest(t))
+def digits_text(s: String) -> Bool:
+  match s:
+    case SNil{}:
+      False{}
+    case SCon{h, t}:
+      Bool.and(Char.is_digit(h), digits_text_rest(t))
+def preload_validate(+format: String) -> IO(Unit):
+  +value : String = build_format_marker(format, "preload")
+  option_enum_validate("preload", value, Bool.or(String.is_empty(value), Bool.or(String.eq(value, "none"), String.eq(value, "static"))))
 def sources_content_validate(+format: String) -> IO(Unit):
   +value : String = build_format_marker(format, "sources-content")
-  build_option_validate_empty_kind("sources-content", value, Bool.or(String.is_empty(value), String.eq(value, "exclude")))
-
+  option_enum_validate("sources-content", value, Bool.or(String.is_empty(value), Bool.or(String.eq(value, "exclude"), String.eq(value, "include"))))
+def naming_template_safe(+value: String) -> Bool:
+  Bool.and(Bool.not(String.contains(value, "..")), Bool.and(Bool.not(String.starts_with(value, "/")), Bool.not(String.contains(value, "\\"))))
+def css_naming_validate(+format: String) -> IO(Unit):
+  +value : String = build_format_marker(format, "css-naming")
+  option_enum_validate("css-naming", value, Bool.or(String.is_empty(value), naming_template_safe(value)))
+def root_validate(+format: String) -> IO(Unit):
+  +value : String = build_format_marker(format, "root")
+  option_enum_validate("root", value, Bool.or(String.is_empty(value), naming_template_safe(value)))
+def min_chunk_validate(+format: String) -> IO(Unit):
+  +value : String = build_format_marker(format, "min-chunk-size")
+  option_enum_validate("min-chunk-size", value, Bool.or(String.is_empty(value), digits_text(value)))
+def flag_true_validate(+key: String, +value: String) -> IO(Unit):
+  option_enum_validate(key, value, Bool.or(String.is_empty(value), String.eq(value, "true")))
+def log_level_validate(+format: String) -> IO(Unit):
+  +value : String = build_format_marker(format, "log-level")
+  option_enum_validate("log-level", value, Bool.or(String.is_empty(value), Bool.or(String.eq(value, "silent"), Bool.or(String.eq(value, "error"), Bool.or(String.eq(value, "warning"), Bool.or(String.eq(value, "info"), String.eq(value, "debug")))))))
+def diagnostics_validate(+format: String) -> IO(Unit):
+  +value : String = build_format_marker(format, "diagnostics")
+  option_enum_validate("diagnostics", value, Bool.or(String.is_empty(value), Bool.or(String.eq(value, "text"), String.eq(value, "json"))))
+def tsconfig_validate(+format: String) -> IO(Unit):
+  +value : String = build_format_marker(format, "tsconfig-raw")
+  +other : String = build_format_marker(format, "tsconfig")
+  option_enum_validate("tsconfig", value, Bool.and(Bool.or(String.is_empty(value), naming_template_safe(value)), Bool.or(String.is_empty(other), naming_template_safe(other))))
 def ignore_annotations_validate_kind(+value: String, valid: Bool) -> IO(Unit):
   match valid:
     case True{}:
       IO.pure(Unit, Unit{})
     case False{}:
       IO.die(Unit, 2, "knot: invalid --ignore-side-effects-annotations " ++ value ++ " (invalid_option)")
-
 def ignore_annotations_validate(+value: String) -> IO(Unit):
   ignore_annotations_validate_kind(value, Bool.or(String.is_empty(value), Bool.or(String.eq(value, "true"), String.eq(value, "false"))))
-
 def build_write_mode_validate_kind(valid: Bool) -> IO(Unit):
   match valid:
     case True{}:
       IO.pure(Unit, Unit{})
     case False{}:
       IO.die(Unit, 2, "knot: --write must be true or false (invalid_option)")
-
 def build_write_mode_validate(+format: String) -> IO(Unit):
   +value : String = build_format_marker(format, "write")
   build_write_mode_validate_kind(Bool.or(String.is_empty(value), Bool.or(String.eq(value, "true"), String.eq(value, "false"))))
-
 def build_profile_repeat_validate(conflict: Bool) -> IO(Unit):
   match conflict:
     case True{}:
       IO.die(Unit, 2, "knot: conflicting --profile options (duplicate_option)")
     case False{}:
       IO.pure(Unit, Unit{})
-
+def data_limit_validate(+key: String, +value: String) -> IO(Unit):
+  option_enum_validate(key, value, Bool.or(String.is_empty(value), Bool.and(digits_text(value), Bool.not(String.eq(value, "0")))))
 def build_options_validate(+format: String) -> IO(Unit):
   do IO<Unit>:
     u0 : Unit <- loader_validate(format)
     u1 : Unit <- sources_content_validate(format)
-    u2 : Unit <- build_option_validate_empty_kind("css-naming", build_format_marker(format, "css-naming"), String.is_empty(build_format_marker(format, "css-naming")))
-    u3 : Unit <- build_option_validate_empty_kind("root", build_format_marker(format, "root"), String.is_empty(build_format_marker(format, "root")))
-    u4 : Unit <- build_option_validate_empty_kind("min-chunk-size", build_format_marker(format, "min-chunk-size"), Bool.or(String.is_empty(build_format_marker(format, "min-chunk-size")), String.eq(build_format_marker(format, "min-chunk-size"), "0")))
-    u5 : Unit <- build_option_validate_empty_kind("clear-on-error", build_format_marker(format, "clear-on-error"), String.is_empty(build_format_marker(format, "clear-on-error")))
+    u1b : Unit <- preload_validate(format)
+    u2 : Unit <- css_naming_validate(format)
+    u3 : Unit <- root_validate(format)
+    u4 : Unit <- min_chunk_validate(format)
+    u5 : Unit <- flag_true_validate("clear-on-error", build_format_marker(format, "clear-on-error"))
     u6 : Unit <- ignore_annotations_validate(build_format_marker(format, "ignore-side-effects-annotations"))
-    u7 : Unit <- build_option_validate_empty_kind("log-level", build_format_marker(format, "log-level"), String.is_empty(build_format_marker(format, "log-level")))
-    u8 : Unit <- build_option_validate_empty_kind("diagnostics", build_format_marker(format, "diagnostics"), String.is_empty(build_format_marker(format, "diagnostics")))
-    u9 : Unit <- build_option_validate_empty_kind("packages", build_format_marker(format, "packages"), Bool.or(String.is_empty(build_format_marker(format, "packages")), Bool.or(String.eq(build_format_marker(format, "packages"), "bundle"), String.eq(build_format_marker(format, "packages"), "external"))))
-    u10 : Unit <- build_option_validate_empty_kind("gpu", build_format_marker(format, "gpu"), String.is_empty(build_format_marker(format, "gpu")))
+    u7 : Unit <- log_level_validate(format)
+    u8 : Unit <- diagnostics_validate(format)
+    u9 : Unit <- option_enum_validate("packages", build_format_marker(format, "packages"), Bool.or(String.is_empty(build_format_marker(format, "packages")), Bool.or(String.eq(build_format_marker(format, "packages"), "bundle"), String.eq(build_format_marker(format, "packages"), "external"))))
+    u10 : Unit <- flag_true_validate("gpu", build_format_marker(format, "gpu"))
     u11 : Unit <- build_option_validate_empty_kind("platform", build_format_marker(format, "platform"), String.is_empty(build_format_marker(format, "platform")))
-    u12 : Unit <- build_option_validate_empty_kind("tsconfig-raw", build_format_marker(format, "tsconfig-raw"), String.is_empty(build_format_marker(format, "tsconfig-raw")))
-    u13 : Unit <- build_write_mode_validate(format)
+    u12 : Unit <- tsconfig_validate(format)
+    u13 : Unit <- data_limit_validate("data-depth", build_format_marker(format, "data-depth"))
+    u14 : Unit <- data_limit_validate("data-nodes", build_format_marker(format, "data-nodes"))
+    u15 : Unit <- build_write_mode_validate(format)
     build_profile_repeat_validate(String.contains(format, ";profile-conflict=true"))
 
 def splitting_output_dir_kind(empty: Bool) -> IO(Unit):
@@ -6253,6 +6965,146 @@ def bundle_format_pick_kind(+format: String, +src: String, +js: String, cjs: Boo
 def bundle_format_pick(+format: String, +src: String, +js: String, cjs: Bool, esm: Bool) -> IO(String):
   +base : String = build_format_base(format)
   bundle_format_pick_kind(base, src, js, String.eq(base, "cjs"), String.eq(base, "esm"))
+def content_join(+acc: String, +item: String, first: Bool) -> String:
+  match first:
+    case True{}:
+      acc ++ item
+    case False{}:
+      acc ++ "," ++ item
+def content_array_go(files: List<&2, String>, +acc: String, first: Bool) -> IO(String):
+  match files:
+    case Nil{}:
+      IO.pure(String, acc ++ "]")
+    case Con{+file, rest}:
+      do IO<String>:
+        raw : String <- read_text(file)
+        content_array_go(rest, content_join(acc, Compiler.json_str(raw), first), False{})
+def map_with_content_kind(+map: String, files: List<&2, String>, include: Bool) -> IO(String):
+  match include:
+    case False{}:
+      IO.pure(String, map)
+    case True{}:
+      do IO<String>:
+        +body : String <- content_array_go(files, "[", True{})
+        return String.take(map, Nat.sub(String.length(map), 1n)) ++ ",\"sourcesContent\":" ++ body ++ "}"
+def map_with_content(+map: String, files: List<&2, String>) -> IO(String):
+  do IO<String>:
+    include : Bool <- file_exists(".knot/sources-include")
+    map_with_content_kind(map, files, include)
+def map_from_lex(+file: String, files: List<&2, String>, lr: Compiler.LexRes) -> String:
+  match lr:
+    case Compiler.LexErr{msg, line, col}:
+      Compiler.make_map_sources(file, files, Nil{})
+    case Compiler.LexOk{tokens}:
+      Compiler.make_map_sources(file, files, tokens)
+def map_add_name_kind(+map: String, +name: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      str_replace(0n, map, "\"names\":[]", "\"names\":[" ++ Compiler.json_str(name) ++ "]", False{}, False{})
+    case False{}:
+      str_replace(0n, map, "\"names\":[", "\"names\":[" ++ Compiler.json_str(name) ++ ",", False{}, False{})
+def map_add_name(+map: String, +name: String) -> String:
+  map_add_name_kind(map, name, String.contains(map, "\"names\":[]"))
+def map_replace_source(+map: String, +file: String, +source: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      map
+    case False{}:
+      str_replace(0n, map, Compiler.json_str(file), Compiler.json_str(source), False{}, False{})
+def map_add_name_if(+map: String, +name: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      map
+    case False{}:
+      map_add_name(map, name)
+def map_compose_kind(+map: String, +file: String, +source: String, +name: String, source_empty: Bool, name_empty: Bool) -> String:
+  map_add_name_if(map_replace_source(map, file, source, source_empty), name, name_empty)
+def map_skip_quote(+s: String) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{'"', t}:
+      t
+    case SCon{_, t}:
+      map_skip_quote(t)
+def map_take_quote(+s: String) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{'"', _}:
+      ""
+    case SCon{h, t}:
+      SCon{h, map_take_quote(t)}
+def map_after_quote(+s: String) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{'"', t}:
+      t
+    case SCon{_, t}:
+      map_after_quote(t)
+def map_field_string(+raw: String, +key: String) -> String:
+  map_take_quote(map_skip_quote(drop_until_key(raw, key)))
+@unsafe def map_add_prior_names(sel: Nat, +map: String, +body: String, +name: String) -> String:
+  match sel:
+    case 0n:
+      +opened : String = map_skip_quote(body)
+      +quoted : String = map_skip_quote(body)
+      map_add_prior_names(1n, map, map_after_quote(opened), map_take_quote(quoted))
+    case _:
+      match name:
+        case SNil{}:
+          map
+        case _:
+          map_add_prior_names(0n, map_add_name(map, name), body, "")
+def map_compose_loaded(+map: String, +file: String, +raw: String) -> String:
+  +source : String = map_field_string(raw, "\"sources\":")
+  map_add_prior_names(0n, map_replace_source(map, file, source, String.is_empty(source)), drop_until_key(raw, "\"names\":"), "")
+def map_compose_loaded_result(+map: String, +file: String, r: Result<&1, &1, U32 & String, String>) -> String:
+  match r:
+    case Fail{_}:
+      map
+    case Done{raw}:
+      map_compose_loaded(map, file, raw)
+def map_compose_one_abs(+map: String, +file: String, +root: String, present: Bool) -> IO(String):
+  match present:
+    case False{}:
+      IO.pure(String, map)
+    case True{}:
+      do IO<String>:
+        raw : String <- read_text(root ++ "/" ++ file ++ ".map")
+        return map_compose_loaded(map, file, raw)
+def map_compose_one_present(+map: String, +file: String, +root: String, present: Bool) -> IO(String):
+  match present:
+    case False{}:
+      do IO<String>:
+        ex : Bool <- file_exists(root ++ "/" ++ file ++ ".map")
+        map_compose_one_abs(map, file, root, ex)
+    case True{}:
+      do IO<String>:
+        raw : String <- read_text(file ++ ".map")
+        return map_compose_loaded(map, file, raw)
+def map_compose_one(+map: String, +file: String) -> IO(String):
+  do IO<String>:
+    +root : String <- IO.try(String, Fs.cwd())
+    ex : Bool <- file_exists(file ++ ".map")
+    map_compose_one_present(map, file, root, ex)
+@unsafe def map_compose_sources(sel: Nat, +map: String, +body: String, +source: String) -> IO(String):
+  match sel:
+    case 0n:
+      +opened : String = map_skip_quote(body)
+      +quoted : String = map_skip_quote(body)
+      map_compose_sources(1n, map, map_after_quote(opened), map_take_quote(quoted))
+    case _:
+      match source:
+        case SNil{}:
+          IO.pure(String, map)
+        case _:
+          do IO<String>:
+            next : String <- map_compose_one(map, source)
+            map_compose_sources(0n, next, body, "")
+def map_compose_text(+map: String) -> IO(String):
+  map_compose_sources(0n, map, drop_until_key(map, "\"sources\":"), "")
 
 def bundle_write_opts_format(+file: String, +out: String, +conds: String, +meta: String, +format: String) -> IO(Unit):
   do IO<Unit>:
@@ -6268,11 +7120,15 @@ def bundle_write_opts_format(+file: String, +out: String, +conds: String, +meta:
     +css : String <- emit_css_files(files, Compiler.dirname(css_path(out)), "", asset_template, build_format_marker(format, "public"), build_minify_enabled(format))
     +output : String <- bundle_format_pick(format, src, js, String.eq(format, "cjs"), String.eq(format, "esm"))
     preflight : Unit <- bundle_preflight(file, src, out, format)
-    map_write : Unit <- transpile_ok_to(out, output, Compiler.make_map_sources(file, files, Nil{}), sourcemap_mode(build_format_marker(format, "sourcemap")))
+    +base_map : String = map_from_lex(file, files, Compiler.lex(src))
+    +composed : String <- map_compose_text(base_map)
+    +full_map : String <- map_with_content(composed, files)
+    map_write : Unit <- transpile_ok_to(out, output, full_map, sourcemap_mode(build_format_marker(format, "sourcemap")))
     u2 : Unit <- write_css_if(out, css, String.is_empty(css), build_format_marker(format, "sourcemap"), files)
     u3 : Unit <- write_css_map_if(out, css, files, build_format_marker(format, "sourcemap"), String.is_empty(css))
     u4 : Unit <- copy_assets(files, out, build_format_marker(format, "asset"))
     u5 : Unit <- bundle_write_dyn(file, out, src, build_format_marker(format, "public"), sourcemap_mode(build_format_marker(format, "sourcemap")), format)
+    u5b : Unit <- graph_dyn_emit(0n, files, out, build_format_marker(format, "public"), sourcemap_mode(build_format_marker(format, "sourcemap")), format, "", False{})
     u6 : Unit <- meta_write(meta, file, out, src, output, css, files, asset_template, sourcemap_mode(build_format_marker(format, "sourcemap")))
     return Unit{}
 def bundle_write_opts(+file: String, +out: String, +conds: String, +meta: String) -> IO(Unit):
@@ -6441,17 +7297,17 @@ def html_attr_ref_pick(+after: String, empty: Bool) -> String:
     case False{}:
       html_quote_go(0n, after, "", 'a', False{})
 
-def html_script_tag_attr_kind(+tag: String, +key: String, empty: Bool) -> String:
-  match empty:
+def html_script_tag_attr_kind(+double: String, +single: String, found_double: Bool) -> String:
+  match found_double:
     case True{}:
-      ""
+      html_quote_go(0n, double, "", 'a', False{})
     case False{}:
-      +value : String = html_attr_keys(tag, key)
-      html_attr_ref_pick(value, String.is_empty(value))
-
+      css_take_until_char(single, '\'')
 def html_script_tag_attr(+html: String, +key: String) -> String:
-  +tag : String = html_drop_attr(html, "<script")
-  html_script_tag_attr_kind(tag, key, String.is_empty(tag))
+  +tag : String = css_take_until_char(drop_until_key(html, "<script"), '>')
+  +double : String = drop_until_key(tag, " " ++ key ++ "=\"")
+  +single : String = drop_until_key(tag, " " ++ key ++ "='")
+  html_script_tag_attr_kind(double, single, Bool.not(String.is_empty(double)))
 
 def html_script_src(+html: String) -> String:
   +tag : String = drop_until_key(html, "<script")
@@ -6662,6 +7518,59 @@ def html_srcset_segment_kind(+rest: String, comma: Bool) -> String:
 def html_rewrite_srcset(+file: String, +outdir: String, +html: String, +template: String, +public: String) -> IO(String):
   html_rewrite_srcset_go(0n, html, file, outdir, template, public, "", "", False{})
 
+def html_template_guard_kind(+ref: String, inside: Bool) -> IO(Unit):
+  match inside:
+    case True{}:
+      IO.die(Unit, 1, "knot: template reference " ++ ref ++ " (html_template_reference)")
+    case False{}:
+      IO.pure(Unit, Unit{})
+def html_template_guard(+prefix: String, +ref: String) -> IO(Unit):
+  html_template_guard_kind(ref, html_pair_active(prefix, "<template", "</template>"))
+
+@unsafe def html_last_tag(sel: Nat, +s: String, +acc: String) -> String:
+  match sel:
+    case 0n:
+      match s:
+        case SNil{}:
+          ""
+        case SCon{'<', t}:
+          html_last_tag(1n, t, "")
+        case SCon{_, t}:
+          html_last_tag(0n, t, "")
+    case 1n:
+      match s:
+        case SNil{}:
+          acc
+        case SCon{' ', t}:
+          html_last_tag(2n, t, acc)
+        case SCon{'>', t}:
+          html_last_tag(2n, t, acc)
+        case SCon{h, t}:
+          html_last_tag(1n, t, acc ++ SCon{h, SNil{}})
+    case _:
+      match s:
+        case SNil{}:
+          acc
+        case SCon{'<', t}:
+          html_last_tag(1n, t, "")
+        case SCon{_, t}:
+          html_last_tag(2n, t, acc)
+def html_executable_tag(+tag: String) -> Bool:
+  Bool.or(String.eq(tag, "script"), Bool.or(String.eq(tag, "link"), String.eq(tag, "iframe")))
+def html_scheme_bad(+ref: String, +tag: String) -> Bool:
+  Bool.or(
+    Bool.or(String.starts_with(ref, "javascript:"), Bool.or(String.starts_with(ref, "vbscript:"), Bool.or(String.starts_with(ref, "file:"), String.starts_with(ref, "ftp:")))),
+    Bool.and(html_executable_tag(tag), Bool.or(String.starts_with(ref, "blob:"), String.starts_with(ref, "data:")))
+  )
+def html_scheme_guard_kind(bad: Bool) -> IO(Unit):
+  match bad:
+    case True{}:
+      IO.die(Unit, 1, "knot: unsupported URL scheme (html_url_scheme)")
+    case False{}:
+      IO.pure(Unit, Unit{})
+def html_scheme_guard(+ref: String, +prefix: String) -> IO(Unit):
+  html_scheme_guard_kind(html_scheme_bad(ref, html_last_tag(0n, prefix, "")))
+
 @unsafe def html_rewrite_attrs_go(
   sel: Nat,
   +html: String,
@@ -6698,6 +7607,7 @@ def html_rewrite_srcset(+file: String, +outdir: String, +html: String, +template
           match p2:
             case 0n:
               do IO<String>:
+                guard : Unit <- html_scheme_guard(ref, prefix)
                 +more : String <- html_rewrite_attrs_go(0n, tail, file, outdir, template, public, key, skip, "", "", "", "", False{}, False{})
                 return prefix ++ key ++ ref ++ html_attr_quote(key) ++ more
             case _:
@@ -6708,6 +7618,7 @@ def html_rewrite_srcset(+file: String, +outdir: String, +html: String, +template
                     return prefix ++ key ++ ref ++ html_attr_quote(key) ++ more
                 case False{}:
                   do IO<String>:
+                    guard : Unit <- html_template_guard(prefix, ref)
                     +path : String <- resolve_open(file, css_ref_path(ref))
                     +name : String <- asset_output_name(path, template)
                     u : Unit <- IO.try(Unit, Fs.copy(path, Compiler.join_rel(outdir, name)))
@@ -6776,6 +7687,44 @@ def html_bundle_css(+file: String, +outdir: String, +conds: String, +format: Str
   html_bundle_css_go(0n, html, file, outdir, conds, format, "", "", "", False{}, False{})
 
 
+def html_script_open(+html: String) -> String:
+  css_take_until_char(drop_until_key(html, "<script"), '>')
+def html_copied_attr_kind(+key: String, +value: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      ""
+    case False{}:
+      " " ++ key ++ "=\"" ++ value ++ "\""
+def html_open_attr(+html: String, +key: String) -> String:
+  html_script_tag_attr(html, key)
+def html_copied_attr(+html: String, +key: String) -> String:
+  +value : String = html_open_attr(html, key)
+  html_copied_attr_kind(key, value, String.is_empty(value))
+def html_preload_crossorigin_kind(+value: String, empty: Bool, present: Bool) -> String:
+  match empty:
+    case False{}:
+      " crossorigin=\"" ++ value ++ "\""
+    case True{}:
+      match present:
+        case True{}:
+          " crossorigin"
+        case False{}:
+          ""
+def html_preload_crossorigin(+html: String) -> String:
+  +value : String = html_open_attr(html, "crossorigin")
+  html_preload_crossorigin_kind(value, String.is_empty(value), String.contains(html_script_open(html), "crossorigin"))
+def html_preload_link_kind(+html: String, +href: String, enabled: Bool) -> String:
+  match enabled:
+    case False{}:
+      ""
+    case True{}:
+      "<link rel=\"modulepreload\" href=\"" ++ href ++ "\"" ++ html_preload_crossorigin(html) ++ html_copied_attr(html, "referrerpolicy") ++ html_copied_attr(html, "nonce") ++ ">"
+def html_insert_preload(+html: String, +link: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      html
+    case False{}:
+      str_replace(0n, html, "<script", link ++ "<script", False{}, False{})
 def html_write_src(+file: String, +out: String, +conds: String, +meta: String, +format: String, +raw: String, +src: String, empty: Bool) -> IO(Unit):
   match empty:
     case True{}:
@@ -6790,19 +7739,78 @@ def html_write_src(+file: String, +out: String, +conds: String, +meta: String, +
         +html_refs : String <- html_rewrite_attrs(file, Compiler.dirname(out), html_srcsets, "src=\"", src, asset_template, public)
         u1 : Unit <- html_bundle_css(file, Compiler.dirname(out), conds, format, raw)
         +script : String <- resolve_open(file, src)
-        +js_out : String = Compiler.join_rel(Compiler.dirname(out), Compiler.basename(Compiler.js_path(script)))
+        +href : String = Compiler.basename(Compiler.js_path(script))
+        +js_out : String = Compiler.join_rel(Compiler.dirname(out), href)
         u2 : Unit <- bundle_write_opts_format(script, js_out, conds, "", format)
         +old_src : String = "src=\"" ++ src ++ "\""
-        +new_src : String = "src=\"" ++ Compiler.basename(Compiler.js_path(script)) ++ "\""
+        +new_src : String = "src=\"" ++ href ++ "\""
         +html : String = str_replace(0n, html_refs, old_src, new_src, False{}, False{})
-        u3 : Unit <- write_text_atomic(out, html)
+        +link : String = html_preload_link_kind(raw, href, String.eq(build_format_marker(format, "preload"), "static"))
+        +linked : String = html_insert_preload(html, link, String.is_empty(link))
+        u3 : Unit <- write_text_atomic(out, linked)
         return Unit{}
+
+def html_manifest_die() -> IO(Unit):
+  IO.die(Unit, 1, "knot: invalid web app manifest (html_manifest)")
+def html_manifest_status_kind(ok: Bool) -> IO(Unit):
+  match ok:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      html_manifest_die()
+def html_manifest_checked(result: Result<&1, &1, U32 & String, String>) -> IO(Unit):
+  match result:
+    case Fail{_}:
+      html_manifest_die()
+    case Done{status}:
+      html_manifest_status_kind(String.eq(status, "ok"))
+def html_manifest_read(+file: String, +href: String, empty: Bool) -> IO(Unit):
+  match empty:
+    case True{}:
+      html_manifest_die()
+    case False{}:
+      do IO<Unit>:
+        +path : String <- resolve_open(file, css_ref_path(href))
+        raw : String <- read_text(path)
+        result : Result<&1, &1, U32 & String, String> <- Json.query(raw, "", "validate")
+        html_manifest_checked(result)
+def html_tag_href(+tag: String) -> String:
+  html_quote_go(0n, drop_until_key(tag, "href=\""), "", 'a', False{})
+def html_manifest_tag(+tag: String) -> Bool:
+  String.contains(tag, "rel=\"manifest\"")
+@unsafe def html_manifest_go(sel: Nat, +html: String, +file: String, +tag: String, +href: String, manifest: Bool, exhausted: Bool) -> IO(Unit):
+  match sel:
+    case 0n:
+      +after : String = drop_until_key(html, "<link")
+      html_manifest_go(1n, after, file, css_take_until_char(after, '>'), "", False{}, String.is_empty(after))
+    case 1n:
+      match exhausted:
+        case True{}:
+          IO.pure(Unit, Unit{})
+        case False{}:
+          html_manifest_go(2n, html, file, tag, html_tag_href(tag), html_manifest_tag(tag), False{})
+    case 2n:
+      match manifest:
+        case False{}:
+          html_manifest_go(0n, css_drop_after_char(html, '>'), file, "", "", False{}, False{})
+        case True{}:
+          html_manifest_go(3n, html, file, tag, href, True{}, Compiler.is_rel(href))
+    case _:
+      match exhausted:
+        case False{}:
+          html_manifest_go(0n, css_drop_after_char(html, '>'), file, "", "", False{}, False{})
+        case True{}:
+          do IO<Unit>:
+            u : Unit <- html_manifest_read(file, href, String.is_empty(href))
+            html_manifest_go(0n, css_drop_after_char(html, '>'), file, "", "", False{}, False{})
 
 def html_write(+file: String, +out: String, +conds: String, +meta: String, +format: String) -> IO(Unit):
   do IO<Unit>:
     raw : String <- read_text(file)
     scan : String <- read_text(file)
     +src : String = html_script_src(scan)
+    body : String <- read_text(file)
+    u : Unit <- html_manifest_go(0n, body, file, "", "", False{}, False{})
     html_write_src(file, out, conds, meta, format, raw, src, String.is_empty(src))
 def bundle_write_entry(+file: String, +out: String, +conds: String, +meta: String, +format: String, html: Bool) -> IO(Unit):
   match html:
@@ -6881,7 +7889,7 @@ def build_entry_output_kind(+file: String, +chosen: String, +outdir: String, +fo
       do IO<String>:
         +template : String = build_format_marker(format, "entry-names")
         +hash : String <- entry_template_hash(file, template)
-        +name : String = entry_template_name(file, template, hash, html)
+        +name : String = entry_template_name_root(file, template, hash, html, build_format_marker(format, "root"))
         IO.pure(String, Compiler.join_rel(outdir, name))
 
 def build_entry_output(+file: String, +chosen: String, +outdir: String, +format: String, html: Bool) -> IO(String):
@@ -7115,23 +8123,26 @@ def scope_replaced(+root: String, +outdir: String, empty: Bool) -> String:
       ""
     case False{}:
       scope_absolute(root, outdir)
-def scope_records_node(+file: String, +out: String, +outdir: String, +format: String) -> IO(String & Bool):
+def scope_cons_extra(outputs: List<&2, String>, +extra: String, empty: Bool) -> List<&2, String>:
+  match empty:
+    case True{}:
+      outputs
+    case False{}:
+      Con{extra, outputs}
+def scope_records_node(+file: String, +out: String, +outdir: String, +format: String, +extra: String) -> IO(String & Bool):
   do IO<String & Bool>:
     +root : String <- IO.try(String, Fs.cwd())
     outputs : List<&2, String> <- scope_output_paths(String.lines(file), out, outdir, format)
     +replaced : String = scope_replaced(root, outdir, String.is_empty(outdir))
-    scope_records_go(0n, List.sort(~String, ~lock_le, outputs), root, replaced, format, "", True{}, Nil{}, ("", True{}))
-
-
-def scope_records_kind(+file: String, +out: String, +outdir: String, +format: String, node: Bool) -> IO(String & Bool):
+    scope_records_go(0n, List.sort(~String, ~lock_le, scope_cons_extra(outputs, extra, String.is_empty(extra))), root, replaced, format, "", True{}, Nil{}, ("", True{}))
+def scope_records_kind(+file: String, +out: String, +outdir: String, +format: String, +extra: String, node: Bool) -> IO(String & Bool):
   match node:
     case True{}:
-      scope_records_node(file, out, outdir, format)
+      scope_records_node(file, out, outdir, format, extra)
     case False{}:
       IO.pure(String & Bool, ("[]", True{}))
-
-def scope_records(+file: String, +out: String, +outdir: String, +format: String) -> IO(String & Bool):
-  scope_records_kind(file, out, outdir, format, String.eq(build_format_marker(format, "target"), "node"))
+def scope_records(+file: String, +out: String, +outdir: String, +format: String, +extra: String) -> IO(String & Bool):
+  scope_records_kind(file, out, outdir, format, extra, String.eq(build_format_marker(format, "target"), "node"))
 
 def config_bool(value: Bool) -> String:
   match value:
@@ -7218,7 +8229,7 @@ def config_mapping_kind(+item: String, empty: Bool) -> String:
 def config_naming(+format: String) -> String:
   "{\"asset\":" ++ Compiler.json_str(config_default(build_format_marker(format, "asset"), "[name]-[hash]")) ++
   ",\"chunk\":" ++ Compiler.json_str(config_default(build_format_marker(format, "chunk-names"), "[name]-[hash]")) ++
-  ",\"css\":\"[name]\",\"cssModule\":\"_[local]_[hash]\",\"entry\":" ++
+  ",\"css\":" ++ Compiler.json_str(config_default(build_format_marker(format, "css-naming"), "[name]")) ++ ",\"cssModule\":\"_[local]_[hash]\",\"entry\":" ++
   Compiler.json_str(config_default(build_format_marker(format, "entry-names"), "[dir][name]")) ++ "}"
 
 def config_drop_kind(+drop: String, empty: Bool) -> String:
@@ -7297,40 +8308,93 @@ def config_display_write_kind(+format: String, display: Bool) -> String:
       ",\"write\":" ++ config_bool(Bool.not(String.eq(build_format_marker(format, "write"), "false")))
     case False{}:
       ""
-
+def config_min_chunk_kind(+value: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      "null"
+    case False{}:
+      value
+def config_min_chunk(+format: String) -> String:
+  +value : String = build_format_marker(format, "min-chunk-size")
+  config_min_chunk_kind(value, String.is_empty(value))
+def config_limit_num(+format: String, +key: String, +fallback: String) -> String:
+  config_default(build_format_marker(format, key), fallback)
+def config_backend_kind(gpu: Bool) -> String:
+  match gpu:
+    case True{}:
+      "gpu"
+    case False{}:
+      "cpu"
+def config_backend(+format: String) -> String:
+  config_backend_kind(String.eq(build_format_marker(format, "gpu"), "true"))
+def config_display_ops(+format: String, display: Bool) -> String:
+  match display:
+    case False{}:
+      ""
+    case True{}:
+      ",\"clearOnError\":" ++ config_bool(String.eq(build_format_marker(format, "clear-on-error"), "true")) ++ ",\"diagnostics\":" ++ Compiler.json_str(config_default(build_format_marker(format, "diagnostics"), "text")) ++ ",\"limits\":{\"assetBytes\":268435456,\"cssImports\":10000,\"cssNestingDepth\":256,\"dataDepth\":" ++ config_limit_num(format, "data-depth", "128") ++ ",\"dataNodes\":" ++ config_limit_num(format, "data-nodes", "1000000") ++ ",\"diagnosticBytes\":8388608,\"diagnosticRecords\":10000,\"edges\":500000,\"extensionBatchItems\":10000,\"extensionDependencies\":10000,\"extensionMemoryBytes\":268435456,\"extensionRequestBytes\":16777216,\"extensionResponseBytes\":16777216,\"extensionTimeoutMs\":30000,\"htmlDepth\":256,\"htmlReferences\":100000,\"importDepth\":1024,\"mapSegments\":10000000,\"modules\":100000,\"packageTargetDepth\":64,\"protocolFrameBytes\":67108864,\"sourceBytes\":1073741824,\"stagedBytes\":4294967296,\"watchEvents\":100000},\"logLevel\":" ++ Compiler.json_str(config_default(build_format_marker(format, "log-level"), "warning")) ++ ",\"requestedBackend\":" ++ Compiler.json_str(config_backend(format))
 def config_fields(+entries: String, +out: String, +conds: String, +format: String, +packages: String, +scopes: String, +redacted: Bool) -> String:
   +target : String = config_default(build_format_marker(format, "target"), "browser")
   +ignore : Bool = String.eq(build_format_marker(format, "ignore-side-effects-annotations"), "true")
   +file : String = config_output_file(out, String.is_empty(out))
   +loader : String = build_format_marker(format, "loader")
-  "{\"aliases\":{},\"chunkMergeOverhead\":{\"floorBytes\":32768,\"minChunkBytes\":null,\"percent\":10},\"conditions\":" ++ config_conditions(conds, String.is_empty(conds)) ++
+  "{\"aliases\":{},\"chunkMergeOverhead\":{\"floorBytes\":32768,\"minChunkBytes\":" ++ config_min_chunk(format) ++ ",\"percent\":10},\"conditions\":" ++ config_conditions(conds, String.is_empty(conds)) ++
   ",\"configInputs\":{\"libraryManifest\":null,\"outputPackages\":" ++ scopes ++ ",\"toml\":" ++ config_toml_input(format) ++ ",\"tsconfig\":[]},\"effectiveConditions\":" ++ config_effective(conds) ++ ",\"entries\":[" ++ entries ++
   "],\"execution\":{\"cssBaseline\":\"chromium:153.0.8010.12\",\"targetBaseline\":" ++ Compiler.json_str(config_target_baseline(target)) ++ "},\"extensions\":[],\"external\":[" ++ config_external(format) ++
   "],\"format\":" ++ Compiler.json_str(build_format_base(format)) ++ ",\"ignoreSideEffectsAnnotations\":" ++ config_bool(ignore) ++
   ",\"library\":{\"exports\":{},\"packageJson\":null},\"loaders\":" ++ config_mapping_kind(loader, String.is_empty(loader)) ++
   ",\"lockfileDigest\":null,\"metadata\":{\"sourceRoot\":\"\"},\"naming\":" ++ config_naming(format) ++ ",\"output\":{\"file\":" ++ file ++
-  "},\"packages\":" ++ Compiler.json_str(packages) ++ ",\"preload\":\"none\",\"preserveSymlinks\":false,\"publicPath\":" ++ Compiler.json_str(build_format_marker(format, "public")) ++
+  "},\"packages\":" ++ Compiler.json_str(packages) ++ ",\"preload\":" ++ Compiler.json_str(config_default(build_format_marker(format, "preload"), "none")) ++ ",\"preserveSymlinks\":false,\"publicPath\":" ++ Compiler.json_str(build_format_marker(format, "public")) ++
   ",\"security\":{\"assetRoot\":\".\",\"csp\":null,\"strictAssets\":true},\"sourceMap\":" ++ Compiler.json_str(sourcemap_mode(build_format_marker(format, "sourcemap"))) ++
   ",\"sourcesContent\":" ++ Compiler.json_str(config_default(build_format_marker(format, "sources-content"), "exclude")) ++ ",\"splitting\":" ++
   config_bool(String.eq(build_format_marker(format, "splitting"), "true")) ++ ",\"target\":" ++ Compiler.json_str(target) ++
-  ",\"transforms\":" ++ config_transforms(format, redacted) ++ ",\"treeShaking\":true,\"workspacePackages\":\"bundle\"" ++ config_display_write_kind(format, redacted) ++ "}"
+  ",\"transforms\":" ++ config_transforms(format, redacted) ++ ",\"treeShaking\":true,\"workspacePackages\":\"bundle\"" ++ config_display_write_kind(format, redacted) ++ config_display_ops(format, redacted) ++ "}"
 
-def config_record_scoped(+entries: String, +out: String, +conds: String, +format: String, scoped: String & Bool) -> IO(String):
-  (+scopes, +portable) = scoped
+def config_apply_library(+fields: String, +path: String, +digest: String, present: Bool) -> String:
+  match present:
+    case False{}:
+      fields
+    case True{}:
+      str_replace(0n, str_replace(0n, fields, "\"libraryManifest\":null", "\"libraryManifest\":" ++ Compiler.json_str(digest), False{}, False{}), "\"packageJson\":null", "\"packageJson\":" ++ Compiler.json_str(path), False{}, False{})
+def config_library_kind(+path: String, empty: Bool) -> IO(String & String & Bool):
+  match empty:
+    case True{}:
+      IO.pure(String & String & Bool, ("", "", False{}))
+    case False{}:
+      do IO<String & String & Bool>:
+        digest : String <- IO.try(String, Hash.sha256_b64(path))
+        return (path, digest, True{})
+def config_library(+format: String) -> IO(String & String & Bool):
+  +path : String = build_format_marker(format, "library-exports")
+  config_library_kind(path, String.is_empty(path))
+
+def config_apply_both(+raw: String, +shown: String, +path: String, +digest: String, present: Bool) -> String & String:
+  match present:
+    case False{}:
+      (raw, shown)
+    case True{}:
+      (config_apply_library(raw, path, digest, True{}), config_apply_library(shown, path, digest, True{}))
+
+def config_finish(pair: String & String, +portable: Bool) -> IO(String):
+  (+fields, +display) = pair
   do IO<String>:
-    +packages : String = config_default(build_format_marker(format, "packages"), "bundle")
-    +fields : String = config_fields(entries, out, conds, format, packages, scopes, False{})
     digest : String <- IO.try(String, Hash.sha256_text("{\"fields\":" ++ fields ++ ",\"portable\":" ++ config_bool(portable) ++ ",\"version\":1}"))
-    +display : String = config_fields(entries, out, conds, format, packages, scopes, True{})
     return "{\"config\":" ++ display ++ ",\"configDigest\":" ++ Compiler.json_str(digest) ++ ",\"portable\":" ++ config_bool(portable) ++ ",\"version\":1}"
 
-def config_record(+file: String, +out: String, +outdir: String, +conds: String, +format: String) -> IO(String):
+def config_record_scoped(+entries: String, +out: String, +conds: String, +format: String, scoped: String & Bool, lib: String & String & Bool) -> IO(String):
+  (+scopes, +portable) = scoped
+  (+lib_path, +lib_digest, lib_present) = lib
+  +packages : String = config_default(build_format_marker(format, "packages"), "bundle")
+  config_finish(config_apply_both(config_fields(entries, out, conds, format, packages, scopes, False{}), config_fields(entries, out, conds, format, packages, scopes, True{}), lib_path, lib_digest, lib_present), portable)
+
+def config_record(+file: String, +out: String, +outdir: String, +conds: String, +format: String, +extra: String) -> IO(String):
   do IO<String>:
     +root : String <- IO.try(String, Fs.cwd())
     +entries : String <- config_entries_kind(file, root, String.is_empty(file))
     +output : String <- config_output_name_kind(file, out, outdir, format, String.is_empty(file))
-    scoped : String & Bool <- scope_records(file, out, outdir, format)
-    config_record_scoped(entries, output, conds, format, scoped)
+    scoped : String & Bool <- scope_records(file, out, outdir, format, extra)
+    lib : String & String & Bool <- config_library(format)
+    config_record_scoped(entries, output, conds, format, scoped, lib)
 
 def output_check_code(first: Bool, prev_dot: Bool, slash: Bool, dot: Bool) -> Nat:
   match first:
@@ -7447,6 +8511,8 @@ def build_meta_flag(+flag: String) -> String:
       "min-chunk-size"
     case "--sources-content":
       "sources-content"
+    case "--preload":
+      "preload"
     case "--clear-on-error":
       "clear-on-error"
     case "--ignore-side-effects-annotations":
@@ -7467,6 +8533,14 @@ def build_meta_flag(+flag: String) -> String:
       "platform"
     case "--tsconfig-raw":
       "tsconfig-raw"
+    case "--tsconfig":
+      "tsconfig"
+    case "--data-depth":
+      "data-depth"
+    case "--data-nodes":
+      "data-nodes"
+    case "--library-exports":
+      "library-exports"
     case _:
       "metafile"
 
@@ -7504,6 +8578,8 @@ def build_extra_value_flag(+flag: String) -> Bool:
       True{}
     case "--sources-content":
       True{}
+    case "--preload":
+      True{}
     case "--clear-on-error":
       True{}
     case "--ignore-side-effects-annotations":
@@ -7523,6 +8599,14 @@ def build_extra_value_flag(+flag: String) -> Bool:
     case "--platform":
       True{}
     case "--tsconfig-raw":
+      True{}
+    case "--tsconfig":
+      True{}
+    case "--data-depth":
+      True{}
+    case "--data-nodes":
+      True{}
+    case "--library-exports":
       True{}
     case _:
       False{}
@@ -7587,6 +8671,8 @@ def is_meta_flag(+which: String) -> Bool:
       True{}
     case "sources-content":
       True{}
+    case "preload":
+      True{}
     case "clear-on-error":
       True{}
     case "ignore-side-effects-annotations":
@@ -7606,6 +8692,14 @@ def is_meta_flag(+which: String) -> Bool:
     case "platform":
       True{}
     case "tsconfig-raw":
+      True{}
+    case "tsconfig":
+      True{}
+    case "data-depth":
+      True{}
+    case "data-nodes":
+      True{}
+    case "library-exports":
       True{}
     case _:
       False{}
@@ -7667,6 +8761,8 @@ def build_option_format(+format: String, +which: String, +val: String) -> String
       format ++ ";min-chunk-size=" ++ val
     case "sources-content":
       format ++ ";sources-content=" ++ val
+    case "preload":
+      format ++ ";preload=" ++ val
     case "clear-on-error":
       format ++ ";clear-on-error=" ++ val
     case "ignore-side-effects-annotations":
@@ -7687,6 +8783,14 @@ def build_option_format(+format: String, +which: String, +val: String) -> String
       format ++ ";platform=" ++ val
     case "tsconfig-raw":
       format ++ ";tsconfig-raw=" ++ val
+    case "tsconfig":
+      format ++ ";tsconfig=" ++ val
+    case "data-depth":
+      format ++ ";data-depth=" ++ val
+    case "data-nodes":
+      format ++ ";data-nodes=" ++ val
+    case "library-exports":
+      format ++ ";library-exports=" ++ val
     case _:
       format
 def manifest_many_append(+acc: String, +piece: String, empty: Bool) -> String:
@@ -7733,9 +8837,9 @@ def manifest_many_output_piece(+out: String, +js: String, css_info: String & Boo
         css_present : Bool <- file_exists(css_file)
         css_info : String & Bool <- manifest_many_css(css_file, css_present)
         +digest : String <- IO.try(String, Hash.sha256_b64(output))
-        graph : List<&2, String> <- bundle_files_conds(file, external_conds(conds, format))
-        +dynamic : String <- manifest_dyn(file, Compiler.dirname(output), Compiler.dyn_imports_of(src), sourcemap_mode(build_format_marker(format, "sourcemap")), format)
-        +dynamic_edges : String <- manifest_dynamic_imports(file, output, Compiler.dyn_imports_of(src), format)
+        +graph : List<&2, String> <- bundle_files_conds(file, external_conds(conds, format))
+        +dynamic : String <- graph_dyn_records(0n, graph, Compiler.dirname(output), sourcemap_mode(build_format_marker(format, "sourcemap")), format, "", False{})
+        +dynamic_edges : String <- graph_dynamic_imports(graph, output, format)
         +assets : String <- manifest_assets(output, graph, build_format_marker(format, "asset"))
         +entry : String = Compiler.json_str(Compiler.basename(file)) ++ ":" ++ Compiler.json_str(output)
         +output_piece : String <- manifest_many_output_piece(output, js, css_info, assets, dynamic, dynamic_edges, digest, sourcemap_mode(build_format_marker(format, "sourcemap")))
@@ -7763,9 +8867,9 @@ def manifest_many_output_piece(+out: String, +js: String, css_info: String & Boo
         css_present : Bool <- file_exists(css_file)
         css_info : String & Bool <- manifest_many_css(css_file, css_present)
         +digest : String <- IO.try(String, Hash.sha256_b64(output))
-        graph : List<&2, String> <- bundle_files_conds(file, external_conds(conds, format))
-        +dynamic : String <- manifest_dyn(file, Compiler.dirname(output), Compiler.dyn_imports_of(src), sourcemap_mode(build_format_marker(format, "sourcemap")), format)
-        +dynamic_edges : String <- manifest_dynamic_imports(file, output, Compiler.dyn_imports_of(src), format)
+        +graph : List<&2, String> <- bundle_files_conds(file, external_conds(conds, format))
+        +dynamic : String <- graph_dyn_records(0n, graph, Compiler.dirname(output), sourcemap_mode(build_format_marker(format, "sourcemap")), format, "", False{})
+        +dynamic_edges : String <- graph_dynamic_imports(graph, output, format)
         +assets : String <- manifest_assets(output, graph, build_format_marker(format, "asset"))
         +entry : String = Compiler.json_str(Compiler.basename(file)) ++ ":" ++ Compiler.json_str(output)
         +output_piece : String <- manifest_many_output_piece(output, js, css_info, assets, dynamic, dynamic_edges, digest, sourcemap_mode(build_format_marker(format, "sourcemap")))
@@ -7964,6 +9068,7 @@ def write_shared_chunk_esm(shared: List<&2, String>, +keep: List<&2, String>, +c
         u3 : Unit <- write_css_map_if(output, css, graph, build_format_marker(format, "sourcemap"), String.is_empty(css))
         u4 : Unit <- copy_assets(graph, output, build_format_marker(format, "asset"))
         u5 : Unit <- bundle_write_dyn(file, output, src, build_format_marker(format, "public"), sourcemap_mode(build_format_marker(format, "sourcemap")), link_format)
+        u5b : Unit <- graph_dyn_emit(0n, graph, output, build_format_marker(format, "public"), sourcemap_mode(build_format_marker(format, "sourcemap")), link_format, "", False{})
         build_entries_shared_go(rest, outdir, conds, format, link_format, shared, keep, chunk, names)
 
 def build_entries_plain_go(files: List<&2, String>, +outdir: String, +conds: String, +format: String) -> IO(Unit):
@@ -8008,8 +9113,32 @@ def shared_chunk_template_kind(empty: Bool, +template: String) -> String:
         case _:
           entry_template_name("shared.ts", template, "", False{})
 
+def scope_chunk_js(+outdir: String, +name: String, js: Bool) -> String:
+  match js:
+    case True{}:
+      Compiler.join_rel(outdir, name)
+    case False{}:
+      ""
 def shared_chunk_name(empty: Bool, +template: String, +format: String) -> String:
   node_output_name(shared_chunk_template_kind(empty, template), format, Bool.or(String.is_empty(template), String.contains(template, "[ext]")))
+def scope_chunk_emit(+outdir: String, +name: String) -> String:
+  scope_chunk_js(outdir, name, String.ends_with(name, ".js"))
+def scope_chunk_present_kind(+outdir: String, +format: String, emit: Bool) -> String:
+  match emit:
+    case False{}:
+      ""
+    case True{}:
+      scope_chunk_emit(outdir, shared_chunk_name(False{}, build_format_marker(format, "chunk-names"), format))
+def scope_chunk_path_kind(+file: String, +outdir: String, +conds: String, +format: String, splitting: Bool) -> IO(String):
+  match splitting:
+    case False{}:
+      IO.pure(String, "")
+    case True{}:
+      do IO<String>:
+        +shared : List<&2, String> <- shared_entries_go(0n, String.lines(file), Nil{}, True{}, conds, Nil{})
+        return scope_chunk_present_kind(outdir, format, Bool.not(list_is_empty(shared)))
+def scope_chunk_path(+file: String, +outdir: String, +conds: String, +format: String) -> IO(String):
+  scope_chunk_path_kind(file, outdir, conds, format, String.eq(build_format_marker(format, "splitting"), "true"))
 
 def build_entries_shared_esm(+file: String, +outdir: String, +conds: String, +format: String) -> IO(Unit):
   do IO<Unit>:
@@ -8068,6 +9197,33 @@ def build_entries_many_meta(+file: String, +outdir: String, +conds: String, +met
   build_entries_many_meta_kind(file, outdir, conds, meta, format, meta_empty, String.starts_with(meta, "manifest:"))
 
 
+def output_collision_seen(+path: String, seen: List<&2, String>) -> Bool:
+  match seen:
+    case Nil{}:
+      False{}
+    case Con{+head, rest}:
+      Bool.or(String.eq(path, head), output_collision_seen(path, rest))
+@unsafe def output_collision_k(sel: Nat, files: List<&2, String>, +outdir: String, +format: String, +seen: List<&2, String>, +output: String, hit: Bool) -> IO(Unit):
+  match sel:
+    case 0n:
+      match files:
+        case Nil{}:
+          IO.pure(Unit, Unit{})
+        case Con{+file, rest}:
+          output_collision_k(1n, rest, outdir, format, seen, file, False{})
+    case 1n:
+      do IO<Unit>:
+        +actual : String <- build_output_final(output, "", outdir, format, String.ends_with(output, ".html"))
+        output_collision_k(2n, files, outdir, format, seen, actual, output_collision_seen(actual, seen))
+    case _:
+      match hit:
+        case True{}:
+          IO.die(Unit, 1, "knot: " ++ output ++ " collides with another output (output_collision)")
+        case False{}:
+          output_collision_k(0n, files, outdir, format, Con{output, seen}, "", False{})
+def output_collision(+file: String, +outdir: String, +format: String) -> IO(Unit):
+  output_collision_k(0n, String.lines(file), outdir, format, Nil{}, "", False{})
+
 def build_entries_many_paths(+file: String, +out: String, +outdir: String, +conds: String, +meta: String, +format: String, out_empty: Bool, dir_empty: Bool) -> IO(Unit):
   match out_empty:
     case False{}:
@@ -8077,7 +9233,9 @@ def build_entries_many_paths(+file: String, +out: String, +outdir: String, +cond
         case True{}:
           IO.die(Unit, 2, "knot: multiple entries require --outdir (missing_output)")
         case False{}:
-          build_entries_many_meta(file, outdir, conds, meta, format, String.is_empty(meta))
+          do IO<Unit>:
+            u : Unit <- output_collision(file, outdir, format)
+            build_entries_many_meta(file, outdir, conds, meta, format, String.is_empty(meta))
 
 def target_supported(+target: String) -> Bool:
   Bool.or(String.is_empty(target), Bool.or(String.eq(target, "browser"), String.eq(target, "node")))
@@ -8236,13 +9394,42 @@ def build_output_discard(+file: String, +out: String, +outdir: String, +conds: S
         IO.try(Unit, Fs.unlink(target))
 
 
+def write_control(+path: String, +text: String, enabled: Bool) -> IO(Unit):
+  match enabled:
+    case False{}:
+      IO.pure(Unit, Unit{})
+    case True{}:
+      write_text(path, text)
+def selected_tsconfig_kind(+raw: String, empty: Bool, +other: String) -> String:
+  match empty:
+    case False{}:
+      raw
+    case True{}:
+      other
+def selected_tsconfig(+format: String) -> String:
+  +raw : String = build_format_marker(format, "tsconfig-raw")
+  selected_tsconfig_kind(raw, String.is_empty(raw), build_format_marker(format, "tsconfig"))
+def prepare_controls(+outdir: String, +format: String) -> IO(Unit):
+  do IO<Unit>:
+    u0 : Unit <- IO.try(Unit, Fs.mkdir_p(".knot"))
+    u1 : Unit <- IO.try(Unit, Data.limits(config_limit_num(format, "data-depth", "128") ++ ":" ++ config_limit_num(format, "data-nodes", "1000000")))
+    u2 : Unit <- write_control(".knot/diagnostics-json", "json", String.eq(build_format_marker(format, "diagnostics"), "json"))
+    u3 : Unit <- write_control(".knot/clear-on-error", outdir, String.eq(build_format_marker(format, "clear-on-error"), "true"))
+    +tsconfig : String = selected_tsconfig(format)
+    u4 : Unit <- write_control(".knot/tsconfig-path", tsconfig, Bool.not(String.is_empty(tsconfig)))
+    +css : String = build_format_marker(format, "css-naming")
+    u5 : Unit <- write_control(".knot/css-naming", css, Bool.not(String.is_empty(css)))
+    u6 : Unit <- write_control(".knot/sources-include", "include", String.eq(build_format_marker(format, "sources-content"), "include"))
+    return Unit{}
 def build_show_config(+file: String, +out: String, +outdir: String, +conds: String, +format: String) -> IO(Unit):
   do IO<Unit>:
-    u0 : Unit <- sourcemap_validate(format)
-    u1 : Unit <- target_validate(format)
-    u2 : Unit <- build_options_validate(format)
-    u3 : Unit <- splitting_output_validate(format, outdir)
-    +json : String <- config_record(file, out, outdir, conds, format)
+    u0 : Unit <- prepare_controls(outdir, format)
+    u1 : Unit <- sourcemap_validate(format)
+    u2 : Unit <- target_validate(format)
+    u3 : Unit <- build_options_validate(format)
+    u4 : Unit <- splitting_output_validate(format, outdir)
+    +chunk : String <- scope_chunk_path(file, outdir, conds, format)
+    +json : String <- config_record(file, out, outdir, conds, format, chunk)
     IO.print(json)
 
 def scope_snapshot_pair(record: String & Bool) -> String:
@@ -8251,7 +9438,7 @@ def scope_snapshot_pair(record: String & Bool) -> String:
 
 def scope_snapshot(+file: String, +out: String, +outdir: String, +format: String) -> IO(String):
   do IO<String>:
-    current : String & Bool <- scope_records(file, out, outdir, format)
+    current : String & Bool <- scope_records(file, out, outdir, format, "")
     return scope_snapshot_pair(current)
 
 def scope_assert_kind(same: Bool) -> IO(Unit):
@@ -8268,8 +9455,36 @@ def scope_assert(+file: String, +out: String, +outdir: String, +format: String, 
 
 def scope_validate(+file: String, +out: String, +outdir: String, +format: String) -> IO(Unit):
   do IO<Unit>:
-    current : String & Bool <- scope_records(file, out, outdir, format)
+    current : String & Bool <- scope_records(file, out, outdir, format, "")
     return Unit{}
+
+def publish_meta(+format: String, +digest: String) -> String:
+  digest ++ "|" ++ config_default(build_format_marker(format, "target"), "browser") ++ "|" ++ build_format_base(format) ++ "|" ++ build_format_marker(format, "public")
+def publish_status_recovery(+status: String, recovery: Bool) -> IO(Unit):
+  match recovery:
+    case True{}:
+      IO.die(Unit, 1, "knot: publication record is corrupt (publication_recovery)")
+    case False{}:
+      IO.die(Unit, 1, "knot: publication failed (publication_error)")
+def publish_status_busy(+status: String, busy: Bool) -> IO(Unit):
+  match busy:
+    case True{}:
+      IO.die(Unit, 1, "knot: publication lock is held (publication_busy)")
+    case False{}:
+      publish_status_recovery(status, String.eq(status, "recovery"))
+def publish_status_kind(+status: String, ok: Bool) -> IO(Unit):
+  match ok:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      publish_status_busy(status, String.eq(status, "busy"))
+def publish_status(+status: String) -> IO(Unit):
+  publish_status_kind(status, String.starts_with(status, "ok|"))
+def publish_generation(+staged: String, +outdir: String, +format: String, stamp: Nat) -> IO(Unit):
+  do IO<Unit>:
+    +digest : String <- IO.try(String, Hash.sha256_text(format))
+    +status : String <- IO.try(String, Fs.publish("publish", staged, outdir, Nat.show(stamp), publish_meta(format, digest)))
+    publish_status(status)
 
 def build_output_atomic_kind(+file: String, +out: String, +outdir: String, +conds: String, +meta: String, +format: String, +previous: String, +multiple: Bool, stage: Bool) -> IO(Unit):
   match stage:
@@ -8280,7 +9495,8 @@ def build_output_atomic_kind(+file: String, +out: String, +outdir: String, +cond
         u0 : Unit <- build_output_dispatch(file, out, staged, conds, "", format, multiple)
         u1 : Unit <- scope_assert(file, out, outdir, format, previous)
         u1b : Unit <- scope_shared_chunk(outdir, staged, format, multiple)
-        u2 : Unit <- IO.try(Unit, Fs.replace_dir(staged, outdir))
+        +published : Nat <- IO.now
+        u2 : Unit <- publish_generation(staged, outdir, format, published)
         build_meta_after(file, out, outdir, conds, meta, format)
     case False{}:
       build_output_dispatch(file, out, outdir, conds, meta, format, multiple)
@@ -8289,32 +9505,236 @@ def build_output_atomic_write_kind(+file: String, +out: String, +outdir: String,
   match write:
     case False{}:
       do IO<Unit>:
-        u0 : Unit <- sourcemap_validate(format)
-        u1 : Unit <- target_validate(format)
-        u2 : Unit <- build_meta_validate(meta, String.contains(file, "\n"))
-        u3 : Unit <- build_options_validate(format)
-        u4 : Unit <- splitting_output_validate(format, outdir)
-        u5 : Unit <- scope_validate(file, out, outdir, format)
+        u0 : Unit <- prepare_controls(outdir, format)
+        u1 : Unit <- sourcemap_validate(format)
+        u2 : Unit <- target_validate(format)
+        u3 : Unit <- build_meta_validate(meta, String.contains(file, "\n"))
+        u4 : Unit <- build_options_validate(format)
+        u5 : Unit <- splitting_output_validate(format, outdir)
+        u6 : Unit <- scope_validate(file, out, outdir, format)
         build_output_discard(file, out, outdir, conds, format, multiple, String.is_empty(outdir))
     case True{}:
       do IO<Unit>:
-        u0 : Unit <- sourcemap_validate(format)
-        u1 : Unit <- target_validate(format)
-        u2 : Unit <- build_meta_validate(meta, String.contains(file, "\n"))
-        u3 : Unit <- build_options_validate(format)
-        u4 : Unit <- splitting_output_validate(format, outdir)
+        u0 : Unit <- prepare_controls(outdir, format)
+        u1 : Unit <- sourcemap_validate(format)
+        u2 : Unit <- target_validate(format)
+        u3 : Unit <- build_meta_validate(meta, String.contains(file, "\n"))
+        u4 : Unit <- build_options_validate(format)
+        u5 : Unit <- splitting_output_validate(format, outdir)
         +previous : String <- scope_snapshot(file, out, outdir, format)
         build_output_atomic_kind(file, out, outdir, conds, meta, format, previous, multiple, Bool.not(String.is_empty(outdir)))
 
 def build_output_atomic(+file: String, +out: String, +outdir: String, +conds: String, +meta: String, +format: String, multiple: Bool) -> IO(Unit):
   build_output_atomic_write_kind(file, out, outdir, conds, meta, format, multiple, Bool.not(String.eq(build_format_marker(format, "write"), "false")))
-def build_finish_selected(+file: String, +out: String, +outdir: String, +conds: String, +meta: String, +format: String, show: Bool) -> IO(Unit):
+def strip_rel_kind(+path: String, dot: Bool) -> String:
+  match dot:
+    case True{}:
+      String.drop(path, 2n)
+    case False{}:
+      path
+def strip_rel(+path: String) -> String:
+  strip_rel_kind(path, String.starts_with(path, "./"))
+def library_die() -> IO(Unit):
+  IO.die(Unit, 2, "knot: package exports do not match the planned output (library_exports)")
+def library_ok(ok: Bool) -> IO(Unit):
+  match ok:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      library_die()
+def library_choose(+branch: String, +fallback: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      fallback
+    case False{}:
+      branch
+def library_type_ok(+pkg_type: String, cjs: Bool) -> Bool:
+  match cjs:
+    case True{}:
+      Bool.or(String.is_empty(pkg_type), String.eq(pkg_type, "commonjs"))
+    case False{}:
+      String.eq(pkg_type, "module")
+def library_branch_key(cjs: Bool) -> String:
+  match cjs:
+    case True{}:
+      "require"
+    case False{}:
+      "import"
+def library_mode_ok(+format: String) -> Bool:
+  Bool.and(String.eq(build_format_marker(format, "packages"), "external"), String.eq(build_format_marker(format, "target"), "node"))
+def library_check(+format: String, +out: String, +text: String) -> IO(Unit):
+  do IO<Unit>:
+    +pkg_type : String <- json_optional_string(text, "type")
+    +cjs : Bool = String.eq(build_format_base(format), "cjs")
+    +branch : String <- json_optional_string(text, "exports/./" ++ library_branch_key(cjs))
+    +fallback : String <- json_optional_string(text, "exports/.")
+    +chosen : String = library_choose(branch, fallback, String.is_empty(branch))
+    library_ok(Bool.and(library_mode_ok(format), Bool.and(library_type_ok(pkg_type, cjs), Bool.and(Bool.not(String.is_empty(chosen)), String.eq(strip_rel(chosen), strip_rel(out))))))
+def library_validate_kind(+format: String, +out: String, +path: String, empty: Bool) -> IO(Unit):
+  match empty:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      do IO<Unit>:
+        text : String <- read_text(path)
+        library_check(format, out, text)
+def library_validate(+format: String, +out: String) -> IO(Unit):
+  +path : String = build_format_marker(format, "library-exports")
+  library_validate_kind(format, out, path, String.is_empty(path))
+
+def serve_output_root_parent(+parent: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      "."
+    case False{}:
+      parent
+
+def serve_output_root_kind(+outdir: String, +output: String, dir_empty: Bool) -> String:
+  match dir_empty:
+    case True{}:
+      serve_output_root_parent(Compiler.dirname(output), String.is_empty(Compiler.dirname(output)))
+    case False{}:
+      outdir
+
+def serve_output_root(+outdir: String, +output: String) -> String:
+  serve_output_root_kind(outdir, output, String.is_empty(outdir))
+
+def serve_output_relative_kind(+root: String, +output: String, starts_root: Bool, dot_root: Bool, starts_dot: Bool) -> String:
+  match starts_root:
+    case True{}:
+      String.drop(output, Nat.add(String.length(root), 1n))
+    case False{}:
+      match dot_root:
+        case True{}:
+          match starts_dot:
+            case True{}:
+              String.drop(output, 2n)
+            case False{}:
+              output
+        case False{}:
+          ""
+
+def serve_output_relative(+root: String, +output: String) -> String:
+  serve_output_relative_kind(root, output, String.starts_with(output, root ++ "/"), String.eq(root, "."), String.starts_with(output, "./"))
+
+def serve_start_naming(+port: U32, +root: String, +entry: String, naming: Bool) -> IO(Unit):
+  match naming:
+    case True{}:
+      Server.run(port, root, entry, 1)
+    case False{}:
+      Server.run(port, root, entry, 0)
+
+def serve_start_checked(+root: String, +entry: String, +format: String, port: U32, safe: Bool) -> IO(Unit):
+  match safe:
+    case True{}:
+      serve_start_naming(port, root, entry, Bool.not(String.is_empty(build_format_marker(format, "entry-names"))))
+    case False{}:
+      IO.die(Unit, 2, "knot serve: output root must be a safe project subdirectory containing the entry (unsafe_output)")
+
+def serve_start_output(+file: String, +out: String, +outdir: String, +format: String, port: U32) -> IO(Unit):
+  do IO<Unit>:
+    +output : String <- build_output_final(file, out, outdir, format, True{})
+    +root : String = serve_output_root(outdir, output)
+    +checked_root : String = output_path_checked(root)
+    +checked_output : String = output_path_checked(output)
+    +entry : String = serve_output_relative(checked_root, checked_output)
+    +safe : Bool = Bool.and(Bool.not(String.is_empty(checked_root)), Bool.and(Bool.not(String.eq(checked_root, ".")), Bool.and(Bool.not(String.is_empty(checked_output)), Bool.not(String.is_empty(entry)))))
+    serve_start_checked(checked_root, entry, format, port, safe)
+
+def serve_port_nonzero(parsed: Maybe<&2, U32>) -> Bool:
+  match parsed:
+    case None{}:
+      False{}
+    case Some{+port}:
+      U32.is_ne(port, 0)
+
+def serve_port_at_most(parsed: Maybe<&2, U32>) -> Bool:
+  match parsed:
+    case None{}:
+      False{}
+    case Some{+port}:
+      U32.is_le(port, 65535)
+
+def serve_port_in_range(+text: String) -> Bool:
+  Bool.and(serve_port_nonzero(U32.read(text)), serve_port_at_most(U32.read(text)))
+
+def serve_port_start(+file: String, +out: String, +outdir: String, +format: String, parsed: Maybe<&2, U32>) -> IO(Unit):
+  match parsed:
+    case None{}:
+      IO.die(Unit, 2, "knot serve: --port must be an integer from 1 through 65535 (invalid_option)")
+    case Some{+port}:
+      serve_start_output(file, out, outdir, format, port)
+
+def serve_port_checked(+file: String, +out: String, +outdir: String, +format: String, +text: String, valid: Bool) -> IO(Unit):
+  match valid:
+    case True{}:
+      serve_port_start(file, out, outdir, format, U32.read(text))
+    case False{}:
+      IO.die(Unit, 2, "knot serve: --port must be an integer from 1 through 65535 (invalid_option)")
+
+def serve_port_result(+file: String, +out: String, +outdir: String, +format: String, +text: String) -> IO(Unit):
+  serve_port_checked(file, out, outdir, format, text, serve_port_in_range(text))
+
+def serve_browser_target(+target: String) -> Bool:
+  Bool.or(String.is_empty(target), String.eq(target, "browser"))
+
+def serve_browser_esm(+format: String) -> Bool:
+  Bool.and(String.eq(build_format_base(format), "esm"), serve_browser_target(build_format_marker(format, "target")))
+
+
+def serve_finish_valid(+file: String, +out: String, +outdir: String, +meta: String, +format: String, show: Bool, valid: Bool) -> IO(Unit):
+  match valid:
+    case True{}:
+      serve_port_result(file, out, outdir, format, build_format_marker(format, "serve-port"))
+    case False{}:
+      IO.die(Unit, 2, "knot serve: expected one browser ESM HTML entry and an output-producing build configuration (unknown_command)")
+
+def serve_finish_meta(+file: String, +out: String, +outdir: String, +meta: String, +format: String, show: Bool, allowed: Bool) -> IO(Unit):
+  match allowed:
+    case True{}:
+      serve_finish_valid(file, out, outdir, meta, format, show, Bool.and(Bool.and(String.ends_with(file, ".html"), Bool.not(String.contains(file, "\n"))), serve_browser_esm(format)))
+    case False{}:
+      IO.die(Unit, 2, "knot serve: metadata written to stdout is incompatible with a server (unknown_command)")
+
+def serve_finish_write(+file: String, +out: String, +outdir: String, +meta: String, +format: String, show: Bool, allowed: Bool) -> IO(Unit):
+  match allowed:
+    case True{}:
+      serve_finish_meta(file, out, outdir, meta, format, show, Bool.and(Bool.not(String.eq(meta, "-")), Bool.not(String.eq(meta, "manifest:-"))))
+    case False{}:
+      IO.die(Unit, 2, "knot serve: --write=false is incompatible with serving output (unknown_command)")
+
+def serve_finish_show(+file: String, +out: String, +outdir: String, +meta: String, +format: String, show: Bool) -> IO(Unit):
   match show:
     case True{}:
-      build_show_config(file, out, outdir, conds, format)
+      IO.die(Unit, 2, "knot serve: --show-config is an inspection-only option (unknown_command)")
     case False{}:
-      build_output_atomic(file, out, outdir, conds, meta, format, String.contains(file, "\n"))
+      serve_finish_write(file, out, outdir, meta, format, show, Bool.not(String.eq(build_format_marker(format, "write"), "false")))
 
+def serve_finish(+file: String, +out: String, +outdir: String, +meta: String, +format: String, show: Bool) -> IO(Unit):
+  serve_finish_show(file, out, outdir, meta, format, show)
+
+def build_finish_selected_regular(+file: String, +out: String, +outdir: String, +conds: String, +meta: String, +format: String, show: Bool) -> IO(Unit):
+  match show:
+    case True{}:
+      do IO<Unit>:
+        +planned : String <- build_output_final(file, out, outdir, format, False{})
+        u : Unit <- library_validate(format, planned)
+        build_show_config(file, out, outdir, conds, format)
+    case False{}:
+      do IO<Unit>:
+        +planned : String <- build_output_final(file, out, outdir, format, False{})
+        u : Unit <- library_validate(format, planned)
+        build_output_atomic(file, out, outdir, conds, meta, format, String.contains(file, "\n"))
+
+def build_finish_selected_mode(+file: String, +out: String, +outdir: String, +conds: String, +meta: String, +format: String, show: Bool, serving: Bool) -> IO(Unit):
+  match serving:
+    case True{}:
+      serve_finish(file, out, outdir, meta, format, show)
+    case False{}:
+      build_finish_selected_regular(file, out, outdir, conds, meta, format, show)
+
+def build_finish_selected(+file: String, +out: String, +outdir: String, +conds: String, +meta: String, +format: String, show: Bool) -> IO(Unit):
+  build_finish_selected_mode(file, out, outdir, conds, meta, format, show, String.eq(build_format_marker(format, "serve"), "true"))
 def build_profile_target_default(+format: String, +target: String, given: Bool) -> String:
   match given:
     case True{}:
@@ -8336,6 +9756,27 @@ def build_profile_dir_default(+outdir: String, +profile_dir: String, overridden:
     case False{}:
       profile_dir
 
+def serve_directory_default_empty(+directory: String, no_out: Bool) -> String:
+  match no_out:
+    case True{}:
+      "dist"
+    case False{}:
+      directory
+
+def serve_directory_default_kind(+directory: String, +out: String, serving: Bool, empty: Bool) -> String:
+  match serving:
+    case True{}:
+      match empty:
+        case True{}:
+          serve_directory_default_empty(directory, String.is_empty(out))
+        case False{}:
+          directory
+    case False{}:
+      directory
+
+def serve_directory_default(+directory: String, +out: String, +format: String, empty: Bool) -> String:
+  serve_directory_default_kind(directory, out, String.eq(build_format_marker(format, "serve"), "true"), empty)
+
 def build_profile_minify_enabled(+format: String, enabled: Bool) -> String:
   match enabled:
     case True{}:
@@ -8350,14 +9791,45 @@ def build_profile_minify_default(+format: String, enabled: Bool, explicit: Bool)
     case False{}:
       build_profile_minify_enabled(format, enabled)
 
+def build_profile_marker_set(+format: String, +key: String, +value: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      format
+    case False{}:
+      format ++ ";" ++ key ++ "=" ++ value
+
+def build_profile_marker_default(+format: String, +key: String, +value: String, explicit: Bool) -> String:
+  match explicit:
+    case True{}:
+      format
+    case False{}:
+      build_profile_marker_set(format, key, value, String.is_empty(value))
+
+def build_profile_bool_enabled(+format: String, +key: String, enabled: Bool) -> String:
+  match enabled:
+    case True{}:
+      format ++ ";" ++ key ++ "=true"
+    case False{}:
+      format
+def build_profile_bool_default(+format: String, +key: String, enabled: Bool, explicit: Bool) -> String:
+  match explicit:
+    case True{}:
+      format
+    case False{}:
+      build_profile_bool_enabled(format, key, enabled)
 def build_finish_profile(+file: String, +out: String, +outdir: String, +conds: String, +meta: String, +format: String, show: Bool, selected: Profile.Settings) -> IO(Unit):
   match selected:
-    case Profile.Settings{+target, +base, +profile_dir, minify}:
+    case Profile.Settings{+target, +base, +profile_dir, minify, +sourcemap, +packages, +library, splitting}:
       +with_format : String = build_profile_format_default(format, base, String.eq(build_format_marker(format, "format-explicit"), "true"))
       +with_target : String = build_profile_target_default(with_format, target, Bool.not(String.is_empty(build_format_marker(with_format, "target"))))
       +with_minify : String = build_profile_minify_default(with_target, minify, Bool.not(String.is_empty(build_format_marker(with_target, "minify"))))
-      +directory : String = build_profile_dir_default(outdir, profile_dir, Bool.or(Bool.not(String.is_empty(out)), Bool.not(String.is_empty(outdir))))
-      build_finish_selected(file, out, directory, conds, meta, with_minify, show)
+      +with_map : String = build_profile_marker_default(with_minify, "sourcemap", sourcemap, Bool.not(String.is_empty(build_format_marker(with_minify, "sourcemap"))))
+      +with_packages : String = build_profile_marker_default(with_map, "packages", packages, Bool.not(String.is_empty(build_format_marker(with_map, "packages"))))
+      +with_library : String = build_profile_marker_default(with_packages, "library-exports", library, Bool.not(String.is_empty(build_format_marker(with_packages, "library-exports"))))
+      +with_split : String = build_profile_bool_default(with_library, "splitting", splitting, String.eq(build_format_marker(with_library, "splitting"), "true"))
+      +profile_directory : String = build_profile_dir_default(outdir, profile_dir, Bool.or(Bool.not(String.is_empty(out)), Bool.not(String.is_empty(outdir))))
+      +directory : String = serve_directory_default(profile_directory, out, with_split, String.is_empty(profile_directory))
+      build_finish_selected(file, out, directory, conds, meta, with_split, show)
 
 def build_finish_profile_result(+file: String, +out: String, +outdir: String, +conds: String, +meta: String, +format: String, show: Bool, result: Result<&2, &2, String, Profile.Settings>) -> IO(Unit):
   match result:
@@ -8540,6 +10012,55 @@ def build_end_value_state(+which: String) -> Nat:
       IO.die(Unit, 2, "knot: build parse error (unknown_command)")
 
 
+def run_serve_help() -> IO(Unit):
+  IO.print("Usage: knot serve <html-entry> [--port N] [build options]\n\nOptions:\n  --port N   Bind to loopback port N (default: 3000)\n  -h, --help Show this help")
+
+def serve_reverse_go(xs: List<&2, String>, acc: List<&2, String>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      acc
+    case Con{h, rest}:
+      serve_reverse_go(rest, Con{h, acc})
+
+def serve_reverse(xs: List<&2, String>) -> List<&2, String>:
+  serve_reverse_go(xs, Nil{})
+
+def serve_args_ready(+port: String, +args: List<&2, String>) -> IO(Unit):
+  +format : String = "esm;serve=true;serve-port=" ++ port
+  run_build_k(0n, serve_reverse(args), "", "", "", "", "", format, "", Nil{}, "", "", False{}, False{}, False{}, False{}, False{})
+
+
+@unsafe def run_serve_parse_k(sel: Nat, args: List<&2, String>, kept: List<&2, String>, +port: String, has_port: Bool) -> IO(Unit):
+  match sel:
+    case 0n:
+      match args:
+        case Nil{}:
+          serve_args_ready(port, kept)
+        case Con{+head, rest}:
+          match head:
+            case "--port":
+              run_serve_parse_k(1n, rest, kept, port, has_port)
+            case "--watch":
+              run_serve_parse_k(0n, rest, kept, port, has_port)
+            case "-h":
+              run_serve_help()
+            case "--help":
+              run_serve_help()
+            case _:
+              run_serve_parse_k(0n, rest, Con{head, kept}, port, has_port)
+    case _:
+      match args:
+        case Nil{}:
+          IO.die(Unit, 2, "knot serve: --port requires a value (invalid_option)")
+        case Con{+value, rest}:
+          match has_port:
+            case True{}:
+              IO.die(Unit, 2, "knot serve: --port may be supplied only once (duplicate_option)")
+            case False{}:
+              run_serve_parse_k(0n, rest, kept, value, True{})
+
+def run_serve(args: List<&2, String>) -> IO(Unit):
+  run_serve_parse_k(0n, build_expand_args(args), Nil{}, "3000", False{})
 def run_build_out(+file: String, rest: List<&2, String>) -> IO(Unit):
   run_build_k(0n, Con{file, build_expand_args(rest)}, "", "", "", "", "", "esm", "", Nil{}, "", "", False{}, False{}, False{}, False{}, False{})
 
@@ -8770,12 +10291,155 @@ def run_upgrade_args(args: List<&2, String>) -> IO(Unit):
       IO.die(Unit, 2, "knot --upgrade does not accept argument " ++ head ++ " (unknown_command)")
 
 
+def snapshot_print_kind(+status: String, ok: Bool) -> IO(Unit):
+  match ok:
+    case True{}:
+      IO.print(String.drop(status, 3n))
+    case False{}:
+      publish_status(status)
+def snapshot_print(+status: String) -> IO(Unit):
+  snapshot_print_kind(status, String.starts_with(status, "ok|"))
+def run_snapshot_ready(+outdir: String, +dest: String, missing: Bool) -> IO(Unit):
+  match missing:
+    case True{}:
+      IO.die(Unit, 2, "knot snapshot: --outdir and --to are required (unknown_command)")
+    case False{}:
+      do IO<Unit>:
+        +status : String <- IO.try(String, Fs.publish("snapshot", outdir, dest, "", ""))
+        snapshot_print(status)
+@unsafe def run_snapshot_k(sel: Nat, args: List<&2, String>, +outdir: String, +dest: String, +head: String, +val: String, outdir_flag: Bool, to_flag: Bool) -> IO(Unit):
+  match sel:
+    case 0n:
+      match args:
+        case Nil{}:
+          run_snapshot_ready(outdir, dest, Bool.or(String.is_empty(outdir), String.is_empty(dest)))
+        case Con{+next, more}:
+          run_snapshot_k(1n, more, outdir, dest, next, "", False{}, False{})
+    case 1n:
+      match args:
+        case Nil{}:
+          IO.die(Unit, 2, "knot snapshot: missing value (unknown_command)")
+        case Con{+next, more}:
+          run_snapshot_k(2n, more, outdir, dest, head, next, String.eq(head, "--outdir"), String.eq(head, "--to"))
+    case 2n:
+      match outdir_flag:
+        case True{}:
+          run_snapshot_k(0n, args, val, dest, "", "", False{}, False{})
+        case False{}:
+          run_snapshot_k(3n, args, outdir, dest, head, val, False{}, to_flag)
+    case _:
+      match to_flag:
+        case True{}:
+          run_snapshot_k(0n, args, outdir, val, "", "", False{}, False{})
+        case False{}:
+          IO.die(Unit, 2, "knot snapshot: unknown argument " ++ head ++ " (unknown_command)")
+def dispatch_snapshot(+cmd: String, rest: List<&2, String>, is_snapshot: Bool) -> IO(Unit):
+  match is_snapshot:
+    case True{}:
+      run_snapshot_k(0n, rest, "", "", "", "", False{}, False{})
+    case False{}:
+      dispatch_scan(cmd, rest, String.eq(cmd, "scan"))
+
+def protocol_response(+id: String, +status: String, +code: String, has_code: Bool) -> String:
+  match has_code:
+    case False{}:
+      "{\"protocolVersion\":1,\"id\":" ++ Compiler.json_str(id) ++ ",\"status\":" ++ Compiler.json_str(status) ++ ",\"diagnostics\":[],\"manifest\":null,\"metafile\":null,\"analysis\":null,\"artifacts\":[]}"
+    case True{}:
+      "{\"protocolVersion\":1,\"id\":" ++ Compiler.json_str(id) ++ ",\"status\":\"error\",\"diagnostics\":[{\"code\":" ++ Compiler.json_str(code) ++ "}],\"manifest\":null,\"metafile\":null,\"analysis\":null,\"artifacts\":[]}"
+def protocol_null_error(+code: String) -> String:
+  "{\"protocolVersion\":1,\"id\":null,\"status\":\"error\",\"diagnostics\":[{\"code\":" ++ Compiler.json_str(code) ++ "}],\"manifest\":null,\"metafile\":null,\"analysis\":null,\"artifacts\":[]}"
+def run_protocol_target(id: String, entry: String, outdir: String, format: String, parts: List<&2, String>) -> IO(Unit):
+  match parts:
+    case Con{+target, Nil{}}:
+      do IO<Unit>:
+        u : Unit <- run_build(Con{entry, Con{"--outdir", Con{outdir, Con{"--format", Con{format, Con{"--target", Con{target, Nil{}}}}}}}})
+        IO.print(protocol_response(id, "ok", "", False{}))
+    case _:
+      IO.print(protocol_null_error("invalid_option"))
+def run_protocol_format(id: String, entry: String, outdir: String, parts: List<&2, String>) -> IO(Unit):
+  match parts:
+    case Con{+format, rest}:
+      run_protocol_target(id, entry, outdir, format, rest)
+    case Nil{}:
+      IO.print(protocol_null_error("invalid_option"))
+def run_protocol_outdir(id: String, entry: String, parts: List<&2, String>) -> IO(Unit):
+  match parts:
+    case Con{+outdir, rest}:
+      run_protocol_format(id, entry, outdir, rest)
+    case Nil{}:
+      IO.print(protocol_null_error("invalid_option"))
+def run_protocol_entry(id: String, parts: List<&2, String>) -> IO(Unit):
+  match parts:
+    case Con{+entry, rest}:
+      run_protocol_outdir(id, entry, rest)
+    case Nil{}:
+      IO.print(protocol_null_error("invalid_option"))
+def run_protocol_build(parts: List<&2, String>) -> IO(Unit):
+  match parts:
+    case Con{+id, rest}:
+      run_protocol_entry(id, rest)
+    case Nil{}:
+      IO.print(protocol_null_error("invalid_option"))
+def run_protocol_error(parts: List<&2, String>, +code: String) -> IO(Unit):
+  match parts:
+    case Con{+id, _}:
+      IO.print(protocol_response(id, "error", code, True{}))
+    case Nil{}:
+      IO.print(protocol_null_error(code))
+def run_protocol_kind(+status: String, rest: List<&2, String>) -> IO(Unit):
+  match status:
+    case "eof":
+      IO.pure(Unit, Unit{})
+    case "malformed":
+      IO.print(protocol_null_error("invalid_option"))
+    case "limit":
+      IO.print(protocol_null_error("resource_limit"))
+    case "bad-version":
+      run_protocol_error(rest, "unsupported_interface")
+    case "missing":
+      run_protocol_error(rest, "invalid_option")
+    case "artifacts":
+      run_protocol_error(rest, "invalid_option")
+    case "ok":
+      run_protocol_build(rest)
+    case _:
+      IO.print(protocol_null_error("invalid_option"))
+def run_protocol_fields(parts: List<&2, String>) -> IO(Unit):
+  match parts:
+    case Con{+status, rest}:
+      run_protocol_kind(status, rest)
+    case Nil{}:
+      IO.print(protocol_null_error("invalid_option"))
+def run_protocol() -> IO(Unit):
+  do IO<Unit>:
+    +fields : String <- IO.try(String, Protocol.request())
+    run_protocol_fields(String.split(fields, '|'))
+def protocol_ignore(rest: List<&2, String>) -> IO(Unit):
+  match rest:
+    case Nil{}:
+      run_protocol()
+    case Con{_, _}:
+      IO.die(Unit, 2, "knot protocol does not accept arguments (unknown_command)")
+def dispatch_protocol(+cmd: String, rest: List<&2, String>, is_protocol: Bool) -> IO(Unit):
+  match is_protocol:
+    case True{}:
+      protocol_ignore(rest)
+    case False{}:
+      dispatch_snapshot(cmd, rest, String.eq(cmd, "snapshot"))
+
+def dispatch_serve(+cmd: String, rest: List<&2, String>, is_serve: Bool) -> IO(Unit):
+  match is_serve:
+    case True{}:
+      run_serve(rest)
+    case False{}:
+      dispatch_protocol(cmd, rest, String.eq(cmd, "protocol"))
+
 def dispatch_build(+cmd: String, rest: List<&2, String>, is_build: Bool) -> IO(Unit):
   match is_build:
     case True{}:
       run_build(rest)
     case False{}:
-      dispatch_scan(cmd, rest, String.eq(cmd, "scan"))
+      dispatch_serve(cmd, rest, String.eq(cmd, "serve"))
 
 def dispatch_run(+cmd: String, rest: List<&2, String>, is_run: Bool) -> IO(Unit):
   match is_run:
@@ -8793,7 +10457,7 @@ def dispatch_clean(+cmd: String, rest: List<&2, String>, is_clean: Bool) -> IO(U
 
 
 def run_help() -> IO(Unit):
-  IO.print("Usage: knot <command>\n\nCommands:\n  install      Install dependencies from package.json\n  add          Add a dependency and install\n  remove       Remove a direct dependency\n  update       Re-resolve dependency ranges\n  --upgrade    Upgrade installed Knot through npm\n  run          Execute a package.json script with its Node engine\n  list         Print direct dependencies\n  why          Show why a package is installed\n  fetch        Fill the store from the lockfile\n  store        Inspect the content-addressed store\n  cache clean  Remove the registry metadata cache\n  transpile    Transform TypeScript or JavaScript without bundling\n  scan         Print runtime imports and exports as JSON\n  analyze      Walk import graph from entrypoints as JSON\n  build        Compile entry points; --no-bundle skips graph linking\n  clean        Remove compiler caches with --build-cache")
+  IO.print("Usage: knot <command>\n\nCommands:\n  install      Install dependencies from package.json\n  add          Add a dependency and install\n  remove       Remove a direct dependency\n  update       Re-resolve dependency ranges\n  --upgrade    Upgrade installed Knot through npm\n  run          Execute a package.json script with its Node engine\n  list         Print direct dependencies\n  why          Show why a package is installed\n  fetch        Fill the store from the lockfile\n  store        Inspect the content-addressed store\n  cache clean  Remove the registry metadata cache\n  transpile    Transform TypeScript or JavaScript without bundling\n  scan         Print runtime imports and exports as JSON\n  analyze      Walk import graph from entrypoints as JSON\n  build        Compile entry points; --no-bundle skips graph linking\n  serve        Build and serve a browser application on loopback\n  clean        Remove compiler caches with --build-cache")
 
 def dispatch_version(+cmd: String, rest: List<&2, String>, is_version: Bool) -> IO(Unit):
   match is_version:

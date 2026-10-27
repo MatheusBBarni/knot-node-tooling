@@ -1,0 +1,4 @@
+interface:
+  display_name: "Spec Finder Batch Tasks"
+  short_description: "Run multiple Spec Finder tasks safely"
+  default_prompt: "Use $sf-batch-tasks to execute all pending tasks for a Spec Finder packet."

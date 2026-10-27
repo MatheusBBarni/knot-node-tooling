@@ -142,18 +142,21 @@ test("build rejects unsupported targets explicitly", async (t) => {
   assert.match(result.stderr, /unsupported target/);
 });
 
-test("build rejects unsupported loader and naming options explicitly", async (t) => {
+test("build rejects an unknown loader and accepts a custom YAML loader", async (t) => {
   const workspace = await makeWorkspace({
     "package.json": JSON.stringify({ name: "app", type: "module" }),
-    "entry.ts": "export const value = 1;\n",
+    "entry.ts": "import data from \"./data.foo\";\nconsole.log(data.answer);\n",
+    "data.foo": "answer: 9\n",
   });
   t.after(() => removeWorkspace(workspace));
 
-  const loader = await runProcess(knot, ["build", "entry.ts", "--outfile", "out.js", "--loader", ".foo=yaml"], { cwd: workspace });
+  const loader = await runProcess(knot, ["build", "entry.ts", "--outfile", "out.js", "--loader", ".foo=wasm"], { cwd: workspace });
   assert.notEqual(loader.status, 0);
   assert.match(loader.stderr, /unsupported loader/);
 
-  const naming = await runProcess(knot, ["build", "entry.ts", "--outfile", "out.js", "--css-naming", "[name].css"], { cwd: workspace });
-  assert.notEqual(naming.status, 0);
-  assert.match(naming.stderr, /--css-naming is unsupported/);
+  const yaml = await runProcess(knot, ["build", "entry.ts", "--outfile", "out.js", "--loader", ".foo=yaml"], { cwd: workspace });
+  assert.equal(yaml.status, 0, yaml.stderr);
+  const run = await runProcess(process.execPath, ["out.js"], { cwd: workspace });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.stdout, "9\n");
 });

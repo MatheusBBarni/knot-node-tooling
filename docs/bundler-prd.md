@@ -142,6 +142,7 @@ A manifest must never point to an artifact that was not committed.
 - Support a configurable public path.
 - Generate a stable JSON manifest and a detailed metafile.
 - Support watch mode with dependency-aware invalidation.
+- Provide a loopback-only local development server for browser applications and refresh the page after successful rebuilds.
 - Reuse parsed modules, resolved paths, transformed modules, and unchanged artifact bytes.
 - Write outputs through a staging generation and activate them only after the complete build succeeds.
 - Run without network access during a build.
@@ -169,6 +170,7 @@ Performance results are not valid until semantic, output, and source-map suites 
 | Memory | Peak RSS at most 4 GiB on the 10,000-module, 1,000-asset CI fixture; ten no-op watch cycles grow steady-state RSS by at most 1% |
 | Cache correctness | Clean and cache-hit builds produce identical artifact bytes |
 | GPU policy | Automatic GPU use requires at least 15% end-to-end improvement for the measured workload class |
+| Local development | The server is reachable only on loopback; successful rebuilds refresh the page, and failed rebuilds retain the last complete output. |
 
 Benchmark reports must include target, format, entry count, graph shape, code splitting, minification, source maps, cache state, storage medium, CPU count, and GPU transfer time.
 A benchmark that omits output-equivalence checks is not acceptable evidence.
@@ -178,7 +180,6 @@ A benchmark that omits output-equivalence checks is not acceptable evidence.
 - Static type checking.
 - Type declaration generation.
 - A JavaScript runtime or REPL.
-- A development server.
 - Hot module replacement.
 - Standalone executable generation.
 - JavaScript bytecode generation.
@@ -203,7 +204,7 @@ A benchmark that omits output-equivalence checks is not acceptable evidence.
 - Property-name mangling in the first stable release.
 - Automatic differential serving for legacy browsers.
 
-A later development server may consume the incremental build API.
+The local development server is a separate local workflow; production builds remain available without it.
 It must not be built into the linker or required for production builds.
 
 ## 7. Users and jobs
@@ -416,6 +417,10 @@ The first implementation should use multicore CPU execution and measure any GPU 
 | `knot build --show-config` | Print a redacted versioned configuration display and exit |
 | `knot snapshot --outdir <managed-root> --to <new-path>` | Validate and atomically export one immutable active generation as a static document root |
 
+The stable release also includes a local development workflow for browser applications.
+The workflow serves only on loopback and refreshes the page after a successful rebuild.
+Hot module replacement and access from local-network devices remain out of scope.
+
 `knot build` must not install a missing package.
 It must report the unresolved specifier, importer, attempted conditions, and the command needed to restore the package graph.
 
@@ -550,6 +555,27 @@ The record schema is defined in section 31.1.
 `knot analyze` emits one versioned JSON document on stdout unless a future explicit text mode is selected.
 Build progress, warnings, and diagnostics never appear on stdout.
 
+### 9.4.3 Local development server
+
+`knot serve <html-entry> [--port N] [applicable build options]` builds and serves one browser ESM HTML entry.
+The default port is `3000`.
+The listener binds only to `127.0.0.1`; no host option permits access from another interface.
+The server watches automatically; `--watch` is redundant.
+Build flags and profile settings follow the existing build parser and precedence rules.
+`--outfile` and `--outdir` remain mutually exclusive, and the selected output root must be a project subdirectory rather than the project root.
+Options that prevent a filesystem output, including `--write=false`, inspection-only `--show-config`, and metadata sent to stdout, are rejected.
+The command prints the ready URL, build diagnostics, and progress to stderr and writes no progress to stdout.
+Before the first successful build, `GET /` returns `503` while the server continues watching.
+After a successful build, requests read from one complete published generation.
+A failed rebuild leaves the previously active generation available and does not trigger a page refresh.
+A successful rebuild activates the new generation and triggers a full-page browser reload.
+Missing artifacts return `404`, and traversal or symlink paths outside the served generation are rejected.
+A fixed-port conflict exits with status `1` without selecting another port; invalid invocation exits with status `2`.
+SIGINT and SIGTERM exit with statuses `130` and `143`, respectively.
+The server does not provide HMR, non-loopback access, package installation, or implicit network access.
+Normal `knot build` remains available without starting a listener.
+
+
 ### 9.5 Implementation status and compatibility matrix
 
 The following matrix records the current native implementation boundary.
@@ -558,18 +584,19 @@ The requirements in this document remain the release contract.
 | Area | Implemented behavior | Explicit boundary |
 | --- | --- | --- |
 | JavaScript and TypeScript | JavaScript, TypeScript, JSX, TSX, ESM, and Node.js CommonJS entry builds; browser CommonJS fails before graph scanning or staging | Target-specific semantics outside the executable fixtures remain unsupported |
-| Built-in loaders | JavaScript-family modules, bounded JSON, JSONC, TOML 1.0, and YAML 1.2 core validation with decoded duplicate-key and unsafe-number rejection, JSONC comments and trailing commas, YAML unsupported-schema rejection, byte-validated UTF-8 data and text reads with leading text BOM removal, CSS, SVG, and file assets | Source-range diagnostics for structured data, normalized data limits, and complete custom file loaders are not implemented |
-| Custom loaders | `--loader <extension>=text`, `--loader <extension>=json`, and `--loader <extension>=jsonc` | Other loader names fail with `unsupported_loader`; custom loader mappings are not yet part of a normalized request |
+| Built-in loaders | JavaScript-family modules, bounded JSON, JSONC, TOML 1.0, and YAML 1.2 core validation with decoded duplicate-key and unsafe-number rejection, JSONC comments and trailing commas, YAML unsupported-schema rejection, byte-validated UTF-8 data and text reads with leading text BOM removal, CSS, SVG, and file assets; structured-data failures include a `file:line:column` source range | Normalized `limits.dataDepth` and `limits.dataNodes` are displayed and enforced for the acceptance fixture; other structured-data range fields remain absent |
+| Custom loaders | `--loader <extension>=text`, `json`, `jsonc`, and `yaml` | Other loader names fail with `unsupported_loader` |
 | Package policy | Dependencies bundle by default; `--packages external` preserves bare package imports | Package resolution still requires the installed Knot graph |
-| Code splitting | Dynamic imports require `--splitting`; path-like external dynamic imports can target independently emitted entries without a synthetic lazy chunk, while other dynamic imports emit deterministic ESM chunks | Splitting is disabled by default; source-range metadata and the complete chunk graph contract remain unfinished |
-| Node.js output scopes | Default Node.js extensions are `.mjs` and `.cjs`; explicitly named `.js` entry outputs check their nearest runtime-visible `package.json`, reject symlinked manifest candidates, track absent candidates, and include selected manifest bytes in `configInputs.outputPackages` and `configDigest`; staged Node.js ESM builds and `--write=false` reject an emitted `.js` shared chunk in an incompatible package scope | Emitted `.js` chunk scopes are not yet recorded in `--show-config` or its digest, and generated package manifests are not yet modeled |
-| Semantic configuration | `build --show-config` emits a versioned JSON document and padded base64 SHA-256 semantic digest, redacts define values, and displays the effective write policy separately from semantic hashing; `--profile` selects a declarative `[build.<name>]` table for `target`, `format`, `outdir`, and typed `minify` with CLI precedence; `ignoreSideEffectsAnnotations` changes reachability and the digest | Complete normalized native requests, remaining declarative profile fields and TOML syntax, and the native JSON protocol are not implemented |
-| Naming | Entry, shared-chunk, and asset templates support the implemented token subset | CSS naming templates, root-relative `[dir]`, and advanced hash collision policies are not implemented |
-| Publication | Writes stage output, replaces the destination directory, and supports `--write=false` temporary builds | Pointer-based generations, atomic reader activation, `knot snapshot`, leases, Windows durability, and multi-crash recovery remain unimplemented release contracts; non-writing builds publish no filesystem metadata |
-| Source maps | Linked, external, and inline maps are emitted for the implemented JavaScript and CSS paths | Prior-loader map composition, full name preservation, and `sourcesContent=include` are not implemented |
-| Metadata | Manifests include byte counts, SHA-256 digests, and `lazy-chunk` or `external-entry` dynamic target kinds for the implemented output paths | Source ranges, full import/export and CSS-association records, removal reasons, and atomic activation of metadata outside the output root remain incomplete |
-| Diagnostics and controls | Invalid targets, browser CommonJS, source-map modes, loaders, package policies, and unsupported option values fail explicitly; `--ignore-side-effects-annotations` controls dependency annotation policy | JSON diagnostics, log levels, GPU execution, and raw tsconfig input are not implemented |
-| Browser verification | Browser execution is covered by the repository's real-page smoke workflow | The browser matrix is not yet the full CSS, HTML, source-map, and preload release suite |
+| Code splitting | Dynamic imports require `--splitting`; path-like external dynamic imports can target independently emitted entries without a synthetic lazy chunk, while other dynamic imports emit deterministic ESM chunks; a dynamic import in a non-entry module emits its own chunk, and each manifest dynamic edge records that importer plus the quoted specifier's half-open source range | Splitting is disabled by default; shared-chunk cycles, merge policy, and static chunk graphs remain unfinished |
+| Node.js output scopes | Default Node.js extensions are `.mjs` and `.cjs`; explicitly named `.js` entry outputs and emitted `.js` shared chunks check their nearest runtime-visible `package.json`, reject symlinked manifest candidates, track absent candidates, and include selected manifest bytes in `configInputs.outputPackages` and `configDigest`; an incompatible `.js` chunk fails `output_module_type` during `--show-config` and before publication; `--library-exports` and `[build.<name>.library] packageJson` record the manifest path and padded base64 SHA-256 digest in `library.packageJson` and `configInputs.libraryManifest`, require a Node target and external packages, and fail `library_exports` before publication when the selected `import` or `require` branch does not match the planned output; the CLI value wins | Knot does not create or edit the author's `package.json`; other nested profile tables remain unimplemented |
+| Semantic configuration | `build --show-config` emits a versioned JSON document and padded base64 SHA-256 semantic digest, redacts define values, and displays the effective write policy separately from semantic hashing; `--profile` selects a declarative `[build.<name>]` table for `target`, `format`, `outdir`, typed `minify`, typed `splitting`, `sourcemap`, and `packages`, with CLI precedence, and `[build.<name>.library] packageJson` supplies the library manifest unless the CLI sets `--library-exports`; `knot protocol` accepts one newline-delimited version 1 build request and returns the versioned response, including `unsupported_interface` for a bad protocol version | Other nested profile tables, analyze and cancel operations, returned artifact bytes, and the C ABI remain unimplemented |
+| Naming | Entry, shared-chunk, asset, and CSS templates support `[name]`, `[hash]`, `[ext]`, and root-relative `[dir]`; identical multi-entry output paths fail with `output_collision` before publication | Hash-extension collision resolution and case-folded destination checks are not implemented |
+| Publication | Outdir builds stage artifacts, copy them into `generations/<id>/` with `complete.json`, atomically replace `active.json`, retain the previous generation, and keep root artifacts for current readers; `knot snapshot --outdir <root> --to <path>` exports the active generation without publication metadata and refuses an existing destination; failure before pointer activation or snapshot rename leaves the previous generation and destination unchanged, and a corrupt `active.json` recovers the validated previous generation; if `previous.json` is also invalid, snapshot fails with `publication_recovery` | Windows ACLs and the remaining multi-crash matrix remain unimplemented; non-writing builds publish no filesystem metadata |
+| Source maps | Linked, external, and inline maps are emitted for the implemented JavaScript and CSS paths; `--sources-content include` adds `sourcesContent` and the fixture preserves emitted identifier names; a sibling prior-loader map replaces the intermediate source and preserves every prior name | Prior-loader mappings and sourcesContent are not composed |
+| Metadata | Manifests include byte counts, SHA-256 digests, and `lazy-chunk` or `external-entry` dynamic target kinds for the implemented output paths; the metafile `removed` array records an `unused-export` reason for a dependency export that tree shaking drops, `importRecords` records the entry import specifier's half-open source range, `exports` records each dependency export name range and whether it was kept, and `cssRecords` records a CSS import association with its source range | Source ranges for non-entry static import edges, full CSS output association records, and atomic activation of metadata outside the output root remain incomplete |
+| Diagnostics and controls | Invalid targets, browser CommonJS, source-map modes, loaders, package policies, and unsupported option values fail explicitly; `--ignore-side-effects-annotations` controls dependency annotation policy; `--log-level`, `--diagnostics`, `--clear-on-error`, `--gpu`, and raw `--tsconfig` are accepted into the normalized request and `--show-config` | JSON diagnostic filtering, log-level suppression, GPU execution, clear-on-error tombstones, and tsconfig path behavior remain incomplete |
+| Browser verification | HTML entries rewrite parsed tag attributes, skip comments and script text, reject local references inside `<template>` with `html_template_reference`, reject `javascript:`, `vbscript:`, `file:`, and `ftp:` attribute URLs, plus `blob:` and `data:` URLs on `script`, `link`, and `iframe` tags, with `html_url_scheme`, and reject a malformed local `rel="manifest"` document with `html_manifest` before publication; browser execution is covered by the repository's real-page smoke workflow | The browser matrix is not yet the full CSS, HTML, source-map, and preload release suite |
+| Development server | `knot serve <html-entry>` builds one browser ESM entry into a published generation and serves its HTML, JavaScript, CSS, and assets on loopback; port `3000` is the default, port conflicts do not fall back, and successful rebuilds trigger full-page reloads while failed rebuilds preserve the active generation; before the first successful build, requests return `503`; acceptance covers option handling, listener binding, assets, traversal, symlink escape, browser execution, recovery, and signal shutdown | HMR, non-loopback access, production hosting, and the remaining release gates are excluded. |
 
 Adding behavior to a boundary requires an executable acceptance fixture and an update to this matrix.
 An explicit boundary is a current implementation status, not a relaxation of the initial stable release contract.
@@ -2845,6 +2872,7 @@ The bundler is ready for initial stable release when all of the following are tr
 - CPU-only systems support every required feature.
 - Automatic GPU dispatch is disabled unless its workload class meets the measured gate.
 - Documentation states unsupported dynamic imports, plugin limits, target behavior, and side-effect trust clearly.
+- The loopback-only development server refreshes the page after successful rebuilds and preserves the last complete output after failed rebuilds.
 
 ## 39. Decision record
 
@@ -2943,3 +2971,11 @@ Non-literal module loading and runtime APIs without relocation-safe semantics fa
 CommonJS named exports are conservative snapshots; CSS import cycles fail; data and URL loaders reject ambiguous or executable inputs.
 The manifest is a deployment graph and the metafile separates deterministic semantics from observed timing and cache state.
 Publication uses a verified generation pointer on all platforms, and consumers must pin one generation across related requests.
+
+### Keep local development serving separate from production builds
+
+The stable release includes local development serving for web application developers.
+The server is reachable only from the developer's computer.
+Successful rebuilds trigger a full-page reload; failed rebuilds preserve the last complete output.
+Hot module replacement and local-network access remain excluded.
+Production builds remain available without the server.

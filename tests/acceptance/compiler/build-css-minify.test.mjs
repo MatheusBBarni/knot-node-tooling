@@ -34,3 +34,15 @@ test("build removes CSS comments and units from zero values", async (t) => {
   const css = await readFile(path.join(workspace, "dist/entry.css"), "utf8");
   assert.equal(css, "body{margin:0;padding:0 0;width:0;}");
 });
+
+test("minified CSS preserves var fallback units", async (t) => {
+  const workspace = await makeWorkspace({
+    "package.json": JSON.stringify({ name: "app", type: "module" }),
+    "entry.ts": 'import "./style.css";\n',
+    "style.css": "body { margin: 0px; }\n.card { padding: var(--space, 0px); }\n",
+  });
+  t.after(() => removeWorkspace(workspace));
+  const result = await runProcess(knot, ["build", "entry.ts", "--outdir", "dist", "--minify"], { cwd: workspace });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(await readFile(path.join(workspace, "dist/entry.css"), "utf8"), "body{margin:0;}.card{padding:var(--space, 0px);}");
+});

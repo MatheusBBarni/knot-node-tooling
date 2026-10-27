@@ -9,6 +9,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "data_limits.h"
+#include "span_status.h"
+
 typedef struct { const char *s; size_t n; } KnotYamlSpan;
 typedef struct { char *s; size_t n, cap; } KnotYamlBuffer;
 typedef struct { char *s; size_t n; } KnotYamlKey;
@@ -166,7 +169,7 @@ static int knot_y_key(KnotYamlParser *p,KnotYamlKeys *keys,KnotYamlSpan key) {
   while(keys->slots[i].s) {if(keys->slots[i].n==key.n&&!memcmp(keys->slots[i].s,key.s,key.n))return knot_y_err(p,"duplicate_key");i=(i+1)&(keys->cap-1);}
   char *copy=malloc(key.n+1);if(!copy)return knot_y_err(p,"resource_limit");memcpy(copy,key.s,key.n);copy[key.n]=0;keys->slots[i]=(KnotYamlKey){copy,key.n};keys->count++;return 1;
 }
-static int knot_y_check(KnotYamlParser *p,unsigned depth) {if(depth>128||++p->nodes>1000000)return knot_y_err(p,"resource_limit");return 1;}
+static int knot_y_check(KnotYamlParser *p,unsigned depth) {if(depth>=knot_limit_depth()||++p->nodes>knot_limit_nodes())return knot_y_err(p,"resource_limit");return 1;}
 static int knot_y_skip(KnotYamlParser *p) {
   while(p->line<p->length) {
     KnotYamlSpan s=p->lines[p->line];size_t i=0;while(i<s.n&&s.s[i]==' ')i++;
@@ -354,10 +357,20 @@ static const char *knot_data_yaml_json(const char *source,size_t length,char **j
     start=i+1;if(i<length&&source[i]=='\r'&&i+1<length&&source[i+1]=='\n')start++;
   }
   int ok=knot_y_skip(&p)&&p.line<p.length;
+  size_t error_line = p.line;
   if(ok)ok=knot_y_block(&p,knot_y_indent(p.lines[p.line]),0,(KnotYamlSpan){0},0);
+  if(!ok && p.line < error_line) error_line = p.line;
   if(ok)ok=knot_y_skip(&p)&&p.line==p.length;
+  size_t error_offset = 0;
+  if (!ok && p.lines && error_line < p.length) error_offset = (size_t)(p.lines[error_line].s - source);
+  const char *error = p.error;
   free(p.lines);
-  if(!ok){free(p.out.s);return p.error;}
+  if(!ok){
+    free(p.out.s);
+    static char knot_yaml_status[192];
+    knot_span_status(source, length, error_offset > length ? length : error_offset, error ? error : "syntax_error", knot_yaml_status, sizeof knot_yaml_status);
+    return knot_yaml_status;
+  }
   *json_out=p.out.s;return NULL;
 }
 #endif

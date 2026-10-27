@@ -1,0 +1,4 @@
+interface:
+  display_name: "Spec Finder TDD Batch"
+  short_description: "Run multiple Spec Finder tasks with TDD execute"
+  default_prompt: "Use $sf-tdd-batch to execute all pending tasks for a Spec Finder packet through TDD execute and TDD report."

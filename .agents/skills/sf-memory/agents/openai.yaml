@@ -1,0 +1,4 @@
+interface:
+  display_name: "Spec Finder Memory"
+  short_description: "Maintain packet and per-task workflow memory"
+  default_prompt: "Use $sf-memory to maintain the current Spec Finder task memory."

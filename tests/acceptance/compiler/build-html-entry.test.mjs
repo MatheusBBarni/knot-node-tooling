@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { runProcess } from "../../support/process.mjs";
@@ -126,4 +126,69 @@ test("build rewrites only attributes in parsed HTML tags", async (t) => {
   assert.match(html, /real\.png/);
   assert.equal(await readFile(path.join(workspace, "dist/real.png"), "utf8"), "real");
   await assert.rejects(() => readFile(path.join(workspace, "dist/fake.png")));
+});
+
+test("local references inside an HTML template fail before publication", async (t) => {
+  const workspace = await makeWorkspace({
+    "package.json": JSON.stringify({ name: "app", type: "module" }),
+    "main.ts": "console.log(1);\n",
+    "real.png": "real",
+    "fake.png": "fake",
+    "index.html": "<script type=\"module\" src=\"./main.ts\"></script><template><img src=\"./fake.png\"></template><img src=\"./real.png\">\n",
+  });
+  t.after(() => removeWorkspace(workspace));
+  const result = await runProcess(knot, ["build", "index.html", "--outdir", "dist"], { cwd: workspace });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /html_template_reference/);
+  await assert.rejects(() => readFile(path.join(workspace, "dist/fake.png"), "utf8"));
+  await assert.rejects(() => readFile(path.join(workspace, "dist/real.png"), "utf8"));
+});
+
+test("a javascript URL in an HTML attribute fails before publication", async (t) => {
+  const workspace = await makeWorkspace({
+    "package.json": JSON.stringify({ name: "app", type: "module" }),
+    "main.ts": "console.log(1);\n",
+    "index.html": '<img src="javascript:alert(1)"><script type="module" src="./main.ts"></script>\n',
+  });
+  t.after(() => removeWorkspace(workspace));
+  const result = await runProcess(knot, ["build", "index.html", "--outdir", "dist"], { cwd: workspace });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /html_url_scheme/);
+  await assert.rejects(() => readFile(path.join(workspace, "dist/index.html"), "utf8"));
+});
+
+test("an executable blob or data URL fails before publication", async (t) => {
+  const workspace = await makeWorkspace({
+    "package.json": JSON.stringify({ name: "app", type: "module" }),
+    "main.ts": "console.log(1);\n",
+    "index.html": '<script type="module" src="./main.ts"></script><script src="blob:https://example.test/id"></script>\n',
+  });
+  t.after(() => removeWorkspace(workspace));
+  const blob = await runProcess(knot, ["build", "index.html", "--outdir", "dist"], { cwd: workspace });
+  assert.notEqual(blob.status, 0);
+  assert.match(blob.stderr, /html_url_scheme/);
+  await assert.rejects(() => readFile(path.join(workspace, "dist/index.html"), "utf8"));
+  await writeFile(path.join(workspace, "index.html"), '<script type="module" src="./main.ts"></script><script src="data:text/javascript,alert(1)"></script>\n');
+  const data = await runProcess(knot, ["build", "index.html", "--outdir", "dist"], { cwd: workspace });
+  assert.notEqual(data.status, 0);
+  assert.match(data.stderr, /html_url_scheme/);
+  await writeFile(path.join(workspace, "index.html"), '<script type="module" src="./main.ts"></script><img src="data:image/png;base64,abc">\n');
+  const image = await runProcess(knot, ["build", "index.html", "--outdir", "dist"], { cwd: workspace });
+  assert.equal(image.status, 0, image.stderr);
+  assert.match(await readFile(path.join(workspace, "dist/index.html"), "utf8"), /data:image\/png;base64,abc/);
+});
+
+test("a malformed web app manifest fails before publication", async (t) => {
+  const workspace = await makeWorkspace({
+    "package.json": JSON.stringify({ name: "app", type: "module" }),
+    "main.ts": "console.log(1);\n",
+    "app.webmanifest": "{",
+    "index.html": '<link rel="manifest" href="./app.webmanifest"><script type="module" src="./main.ts"></script>\n',
+  });
+  t.after(() => removeWorkspace(workspace));
+  const result = await runProcess(knot, ["build", "index.html", "--outdir", "dist"], { cwd: workspace });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /html_manifest/);
+  await assert.rejects(() => readFile(path.join(workspace, "dist/index.html"), "utf8"));
+  await assert.rejects(() => readFile(path.join(workspace, "dist/app.webmanifest"), "utf8"));
 });
